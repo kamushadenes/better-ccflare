@@ -1,8 +1,9 @@
 /**
  * Consolidated stats repository to eliminate duplication between cli-commands and http-api
  */
-import type { Database } from "bun:sqlite";
+
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
+import type { DatabaseAdapter } from "../adapter";
 
 export interface AccountStats {
 	name: string;
@@ -25,7 +26,7 @@ export interface AggregatedStats {
 }
 
 export class StatsRepository {
-	constructor(private db: Database) {}
+	constructor(private db: DatabaseAdapter) {}
 
 	/**
 	 * Get aggregated statistics for requests within a time window.
@@ -34,22 +35,21 @@ export class StatsRepository {
 	 */
 	getAggregatedStats(sinceMs?: number): AggregatedStats {
 		const since = sinceMs ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
-		const stats = this.db
-			.query(
-				`SELECT
-					COUNT(*) as totalRequests,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
-					AVG(response_time_ms) as avgResponseTime,
-					SUM(input_tokens) as inputTokens,
-					SUM(output_tokens) as outputTokens,
-					SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
-					SUM(cache_read_input_tokens) as cacheReadInputTokens,
-					SUM(cost_usd) as totalCostUsd,
-					AVG(output_tokens_per_second) as avgTokensPerSecond
-				FROM requests
-				WHERE timestamp > ?`,
-			)
-			.get(since) as AggregatedStats;
+		const stats = this.db.get<AggregatedStats>(
+			`SELECT
+				COUNT(*) as totalRequests,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+				AVG(response_time_ms) as avgResponseTime,
+				SUM(input_tokens) as inputTokens,
+				SUM(output_tokens) as outputTokens,
+				SUM(cache_creation_input_tokens) as cacheCreationInputTokens,
+				SUM(cache_read_input_tokens) as cacheReadInputTokens,
+				SUM(cost_usd) as totalCostUsd,
+				AVG(output_tokens_per_second) as avgTokensPerSecond
+			FROM requests
+			WHERE timestamp > ?`,
+			[since],
+		) as AggregatedStats;
 
 		// Calculate total tokens
 		const totalTokens =
@@ -102,9 +102,7 @@ export class StatsRepository {
 			? [NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit]
 			: [limit];
 
-		const accountStats = this.db
-			.query(accountStatsQuery)
-			.all(...params) as Array<{
+		const accountStats = this.db.query(accountStatsQuery, params) as Array<{
 			id: string;
 			name: string;
 			requestCount: number;
@@ -117,17 +115,16 @@ export class StatsRepository {
 		const accountIds = accountStats.map((a) => a.id);
 		const placeholders = accountIds.map(() => "?").join(",");
 
-		const successRates = this.db
-			.query(
-				`SELECT 
-					account_used as accountId,
-					COUNT(*) as total,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
-				FROM requests
-				WHERE account_used IN (${placeholders})
-				GROUP BY account_used`,
-			)
-			.all(...accountIds) as Array<{
+		const successRates = this.db.query(
+			`SELECT 
+				account_used as accountId,
+				COUNT(*) as total,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+			FROM requests
+			WHERE account_used IN (${placeholders})
+			GROUP BY account_used`,
+			accountIds,
+		) as Array<{
 			accountId: string;
 			total: number;
 			successful: number;
@@ -154,26 +151,25 @@ export class StatsRepository {
 	 * Get count of active accounts
 	 */
 	getActiveAccountCount(): number {
-		const result = this.db
-			.query("SELECT COUNT(*) as count FROM accounts WHERE request_count > 0")
-			.get() as { count: number };
-		return result.count;
+		const result = this.db.get<{ count: number }>(
+			"SELECT COUNT(*) as count FROM accounts WHERE request_count > 0",
+		);
+		return result?.count ?? 0;
 	}
 
 	/**
 	 * Get recent errors (already exists in request.repository, but adding for completeness)
 	 */
 	getRecentErrors(limit = 10): string[] {
-		const errors = this.db
-			.query(
-				`SELECT DISTINCT error_message
-				FROM requests
-				WHERE error_message IS NOT NULL
-					AND error_message != ''
-				ORDER BY timestamp DESC
-				LIMIT ?`,
-			)
-			.all(limit) as Array<{ error_message: string }>;
+		const errors = this.db.query(
+			`SELECT DISTINCT error_message
+			FROM requests
+			WHERE error_message IS NOT NULL
+				AND error_message != ''
+			ORDER BY timestamp DESC
+			LIMIT ?`,
+			[limit],
+		) as Array<{ error_message: string }>;
 
 		return errors.map((e) => e.error_message);
 	}
@@ -184,28 +180,27 @@ export class StatsRepository {
 	getTopModels(
 		limit = 5,
 	): Array<{ model: string; count: number; percentage: number }> {
-		const models = this.db
-			.query(
-				`WITH model_counts AS (
-					SELECT
-						model,
-						COUNT(*) as count
-					FROM requests
-					WHERE model IS NOT NULL
-					GROUP BY model
-				),
-				total AS (
-					SELECT COUNT(*) as total FROM requests WHERE model IS NOT NULL
-				)
+		const models = this.db.query(
+			`WITH model_counts AS (
 				SELECT
-					mc.model,
-					mc.count,
-					ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
-				FROM model_counts mc, total t
-				ORDER BY mc.count DESC
-				LIMIT ?`,
+					model,
+					COUNT(*) as count
+				FROM requests
+				WHERE model IS NOT NULL
+				GROUP BY model
+			),
+			total AS (
+				SELECT COUNT(*) as total FROM requests WHERE model IS NOT NULL
 			)
-			.all(limit) as Array<{
+			SELECT
+				mc.model,
+				mc.count,
+				ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
+			FROM model_counts mc, total t
+			ORDER BY mc.count DESC
+			LIMIT ?`,
+			[limit],
+		) as Array<{
 			model: string;
 			count: number;
 			percentage: number;
@@ -224,19 +219,17 @@ export class StatsRepository {
 		successRate: number;
 	}> {
 		// Get API key request counts
-		const apiKeyStats = this.db
-			.query(
-				`SELECT
-					api_key_id as id,
-					api_key_name as name,
-					COUNT(*) as requests
-				FROM requests
-				WHERE api_key_id IS NOT NULL
-				GROUP BY api_key_id, api_key_name
-				HAVING requests > 0
-				ORDER BY requests DESC`,
-			)
-			.all() as Array<{
+		const apiKeyStats = this.db.query(
+			`SELECT
+				api_key_id as id,
+				api_key_name as name,
+				COUNT(*) as requests
+			FROM requests
+			WHERE api_key_id IS NOT NULL
+			GROUP BY api_key_id, api_key_name
+			HAVING requests > 0
+			ORDER BY requests DESC`,
+		) as Array<{
 			id: string;
 			name: string;
 			requests: number;
@@ -260,17 +253,16 @@ export class StatsRepository {
 
 		const placeholders = apiKeyIds.map(() => "?").join(",");
 
-		const successRates = this.db
-			.query(
-				`SELECT
-					api_key_id as apiKeyId,
-					COUNT(*) as total,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
-				FROM requests
-				WHERE api_key_id IN (${placeholders})
-				GROUP BY api_key_id`,
-			)
-			.all(...apiKeyIds) as Array<{
+		const successRates = this.db.query(
+			`SELECT
+				api_key_id as apiKeyId,
+				COUNT(*) as total,
+				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+			FROM requests
+			WHERE api_key_id IN (${placeholders})
+			GROUP BY api_key_id`,
+			apiKeyIds,
+		) as Array<{
 			apiKeyId: string;
 			total: number;
 			successful: number;
