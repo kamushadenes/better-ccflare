@@ -25,13 +25,20 @@ Plans:
 
 **Scope:**
 - Add `postgres` (porsager/postgres) dependency to `packages/database`
-- Implement `PostgresAdapter` with connection pooling
-- SQL dialect layer: translate upsert syntax, handle type differences
-- PostgreSQL-specific retry logic (error codes 40001, 40P01, 55P03)
+- Define `AsyncDatabaseAdapter` interface (async mirror of sync `DatabaseAdapter`)
+- SQL utility layer: placeholder conversion (`?` → `$N`), upsert/insert-ignore builders
+- Implement `PostgresAdapter` with connection pooling via postgres.js
+- AsyncLocalStorage-based transaction scoping (concurrency-safe)
+- PostgreSQL-specific retry logic (error codes 40001, 40P01, 55P03, connection errors)
 - Connection lifecycle (pool creation, graceful shutdown)
 
 **Requirements:** R3
 **Verification:** Adapter unit tests pass with a real PostgreSQL instance.
+**Plans:** 2 plans
+
+Plans:
+- [x] 02-01-PLAN.md -- AsyncDatabaseAdapter interface, SQL utilities (placeholder conversion, upsert builders)
+- [ ] 02-02-PLAN.md -- PostgresAdapter implementation with connection pooling, transactions, retry logic
 
 ---
 

@@ -1,10 +1,11 @@
 # Project State
 
 ## Current Phase
-Phase 1 — Database Adapter Interface & SQLite Adapter. Plan 02 complete. Phase 1 complete.
+Phase 2 — PostgreSQL Adapter Implementation. Plan 01 complete.
 
 ## Progress
 Phase 1: Plan 2/2 complete
+Phase 2: Plan 1/2 complete
 
 ## Completed
 - [x] Forked tombii/better-ccflare to kamushadenes/better-ccflare
@@ -13,6 +14,7 @@ Phase 1: Plan 2/2 complete
 - [x] Created project plan, requirements, and roadmap
 - [x] Phase 1 Plan 01: DatabaseAdapter interface + SqliteAdapter + 11 TDD tests
 - [x] Phase 1 Plan 02: Refactored repositories + DatabaseOperations to use adapter pattern
+- [x] Phase 2 Plan 01: AsyncDatabaseAdapter interface + SQL utilities (13 TDD tests)
 
 ## Decisions Log
 | Date | Decision | Rationale |
@@ -25,15 +27,19 @@ Phase 1: Plan 2/2 complete
 | 2026-03-01 | Sync interface in Phase 1 | Matches current bun:sqlite usage; async deferred to Phase 2 |
 | 2026-03-01 | Database import changed to type-only | SqliteAdapter handles instantiation; Database only used as type |
 | 2026-03-01 | getDatabase() kept alongside getAdapter() | Backward compat for non-repo callers using raw Database |
+| 2026-03-01 | AsyncDatabaseAdapter mirrors sync shape | Consistency for consumers; Promise-wrapped returns |
+| 2026-03-01 | Async transaction takes async callback | PostgreSQL queries within transactions are async |
+| 2026-03-01 | Simple regex for placeholder conversion | No ? in SQL string literals in codebase; safe approach |
 
 ## Performance Metrics
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 01 | 01 | 582s | 1 | 3 |
 | 01 | 02 | 404s | 3 | 5 |
+| 02 | 01 | 645s | 4 | 5 |
 
 ## Last Session
-- **Stopped at:** Completed 01-02-PLAN.md
+- **Stopped at:** Completed 02-01-PLAN.md
 
 ## Blockers
 None.
