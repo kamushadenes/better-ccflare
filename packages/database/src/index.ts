@@ -32,5 +32,9 @@ export { ModelTranslationRepository } from "./repositories/model-translation.rep
 export type { StatsRepository } from "./repositories/stats.repository";
 // Re-export retry utilities for external use (from your improvements)
 export { withDatabaseRetry, withDatabaseRetrySync } from "./retry";
+export {
+	buildInsertIgnoreSql,
+	buildUpsertSql,
+	convertPlaceholders,
+} from "./sql-utils";
 export { SqliteAdapter } from "./sqlite-adapter";
-export { buildInsertIgnoreSql, buildUpsertSql, convertPlaceholders } from "./sql-utils";

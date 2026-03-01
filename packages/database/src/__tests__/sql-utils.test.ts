@@ -72,11 +72,7 @@ describe("buildUpsertSql", () => {
 	});
 
 	it("omits conflict columns from SET clause", () => {
-		const result = buildUpsertSql(
-			"t",
-			["a", "b", "c", "d"],
-			["a", "c"],
-		);
+		const result = buildUpsertSql("t", ["a", "b", "c", "d"], ["a", "c"]);
 		expect(result).toContain("DO UPDATE SET b = EXCLUDED.b, d = EXCLUDED.d");
 		expect(result).not.toContain("a = EXCLUDED.a");
 		expect(result).not.toContain("c = EXCLUDED.c");

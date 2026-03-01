@@ -23,10 +23,7 @@ export function buildUpsertSql(
 	return `INSERT INTO ${table} (${colList}) VALUES (${placeholders}) ON CONFLICT (${conflictList}) DO UPDATE SET ${setClauses}`;
 }
 
-export function buildInsertIgnoreSql(
-	table: string,
-	columns: string[],
-): string {
+export function buildInsertIgnoreSql(table: string, columns: string[]): string {
 	const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
 	const colList = columns.join(", ");
 	return `INSERT INTO ${table} (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
