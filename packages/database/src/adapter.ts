@@ -1,3 +1,5 @@
+export type DatabaseDialect = "sqlite" | "postgres";
+
 export type QueryParams = Array<string | number | boolean | null | Buffer>;
 
 export interface RunResult {
@@ -5,6 +7,8 @@ export interface RunResult {
 }
 
 export interface DatabaseAdapter {
+	readonly dialect: DatabaseDialect;
+
 	/** Execute a query returning multiple rows */
 	query<R = Record<string, unknown>>(sql: string, params?: QueryParams): R[];
 
@@ -25,6 +29,8 @@ export interface DatabaseAdapter {
 }
 
 export interface AsyncDatabaseAdapter {
+	readonly dialect: DatabaseDialect;
+
 	/** Execute a query returning multiple rows */
 	query<R = Record<string, unknown>>(
 		sql: string,

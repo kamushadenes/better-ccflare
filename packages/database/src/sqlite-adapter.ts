@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
-import type { DatabaseAdapter, QueryParams, RunResult } from "./adapter";
+import type { DatabaseAdapter, DatabaseDialect, QueryParams, RunResult } from "./adapter";
 
 export class SqliteAdapter implements DatabaseAdapter {
+	readonly dialect: DatabaseDialect = "sqlite";
 	private db: Database;
 
 	constructor(

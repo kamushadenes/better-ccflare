@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import postgres from "postgres";
 import type {
 	AsyncDatabaseAdapter,
+	DatabaseDialect,
 	PostgresAdapterOptions,
 	QueryParams,
 	RunResult,
@@ -9,6 +10,7 @@ import type {
 import { convertPlaceholders } from "./sql-utils";
 
 export class PostgresAdapter implements AsyncDatabaseAdapter {
+	readonly dialect: DatabaseDialect = "postgres";
 	private sql: postgres.Sql;
 	private txStorage = new AsyncLocalStorage<postgres.TransactionSql>();
 
