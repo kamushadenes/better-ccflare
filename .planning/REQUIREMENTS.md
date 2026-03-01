@@ -13,10 +13,10 @@
 - [x] Preserve all PRAGMA optimizations, WAL mode, retry logic
 
 ### R3: PostgreSQL Adapter
-- [ ] Implement `PostgresAdapter` using `postgres` (porsager/postgres) library
-- [ ] Support connection via `DATABASE_URL` environment variable
-- [ ] Connection pooling with configurable pool size
-- [ ] Map all SQLite-specific SQL to PostgreSQL equivalents:
+- [x] Implement `PostgresAdapter` using `postgres` (porsager/postgres) library
+- [x] Support connection via `DATABASE_URL` environment variable
+- [x] Connection pooling with configurable pool size
+- [x] Map all SQLite-specific SQL to PostgreSQL equivalents:
   - `INSERT OR REPLACE` → `ON CONFLICT DO UPDATE`
   - `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING`
   - Integer booleans → native BOOLEAN (transparent at adapter level)

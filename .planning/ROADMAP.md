@@ -38,7 +38,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md -- AsyncDatabaseAdapter interface, SQL utilities (placeholder conversion, upsert builders)
-- [ ] 02-02-PLAN.md -- PostgresAdapter implementation with connection pooling, transactions, retry logic
+- [x] 02-02-PLAN.md -- PostgresAdapter implementation with connection pooling, transactions, retry logic
 
 ---
 
