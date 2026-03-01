@@ -35,7 +35,10 @@ export class PostgresAdapter implements AsyncDatabaseAdapter {
 		params: QueryParams = [],
 	): Promise<R[]> {
 		const pgSql = convertPlaceholders(sql);
-		const result = await this.activeSql.unsafe(pgSql, params as any[]);
+		const result = await this.activeSql.unsafe(
+			pgSql,
+			params as readonly (string | number | boolean | null | Buffer)[],
+		);
 		return [...result] as R[];
 	}
 
@@ -49,7 +52,10 @@ export class PostgresAdapter implements AsyncDatabaseAdapter {
 
 	async run(sql: string, params: QueryParams = []): Promise<RunResult> {
 		const pgSql = convertPlaceholders(sql);
-		const result = await this.activeSql.unsafe(pgSql, params as any[]);
+		const result = await this.activeSql.unsafe(
+			pgSql,
+			params as readonly (string | number | boolean | null | Buffer)[],
+		);
 		return { changes: result.count };
 	}
 
