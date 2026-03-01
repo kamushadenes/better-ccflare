@@ -4,7 +4,13 @@ export { DatabaseOperations };
 
 export type { RuntimeConfig } from "@better-ccflare/config";
 // Re-export adapter types and implementation
-export type { DatabaseAdapter, QueryParams, RunResult } from "./adapter";
+export type {
+	AsyncDatabaseAdapter,
+	DatabaseAdapter,
+	PostgresAdapterOptions,
+	QueryParams,
+	RunResult,
+} from "./adapter";
 // Re-export other utilities
 export { AsyncDbWriter } from "./async-writer";
 export type {
@@ -27,3 +33,4 @@ export type { StatsRepository } from "./repositories/stats.repository";
 // Re-export retry utilities for external use (from your improvements)
 export { withDatabaseRetry, withDatabaseRetrySync } from "./retry";
 export { SqliteAdapter } from "./sqlite-adapter";
+export { buildInsertIgnoreSql, buildUpsertSql, convertPlaceholders } from "./sql-utils";
