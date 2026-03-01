@@ -22,6 +22,11 @@ export { migrateFromCcflare } from "./migrate-from-ccflare";
 export { ensureSchema, runMigrations } from "./migrations";
 export { getLegacyDbPath, resolveDbPath } from "./paths";
 export { analyzeIndexUsage } from "./performance-indexes";
+export { PostgresAdapter } from "./postgres-adapter";
+export {
+	isRetryablePostgresError,
+	RETRYABLE_POSTGRES_CODES,
+} from "./postgres-retry";
 export type {
 	ModelTranslation,
 	SimilarModel,
