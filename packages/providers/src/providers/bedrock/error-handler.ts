@@ -144,7 +144,7 @@ function getModelNotFoundSuggestion(error: unknown): string {
 
 	try {
 		const db = DatabaseFactory.getInstance();
-		const repo = new ModelTranslationRepository(db.getDatabase());
+		const repo = new ModelTranslationRepository(db.getAdapter());
 		const suggestions = repo.findSimilar(modelName, 3);
 
 		if (suggestions.length > 0) {

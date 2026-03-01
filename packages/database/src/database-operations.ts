@@ -1,9 +1,10 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
 import type { Account, StrategyStore } from "@better-ccflare/types";
+import type { DatabaseAdapter } from "./adapter";
 import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
@@ -17,6 +18,7 @@ import {
 import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
 import { withDatabaseRetrySync } from "./retry";
+import { SqliteAdapter } from "./sqlite-adapter";
 
 export interface DatabaseConfig {
 	/** Enable WAL (Write-Ahead Logging) mode for better concurrency */
@@ -147,6 +149,7 @@ function configureSqlite(
  */
 export class DatabaseOperations implements StrategyStore, Disposable {
 	private db: Database;
+	private adapter: SqliteAdapter;
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
@@ -195,7 +198,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		const dir = dirname(resolvedPath);
 		mkdirSync(dir, { recursive: true });
 
-		this.db = new Database(resolvedPath, { create: true });
+		this.adapter = new SqliteAdapter(resolvedPath, { create: true });
+		this.db = this.adapter.getRawDatabase();
 
 		// Apply SQLite configuration for distributed filesystem optimization
 		// Skip expensive integrity checks in fast mode for CLI commands
@@ -205,13 +209,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		runMigrations(this.db, resolvedPath);
 
 		// Initialize repositories
-		this.accounts = new AccountRepository(this.db);
-		this.requests = new RequestRepository(this.db);
-		this.oauth = new OAuthRepository(this.db);
-		this.strategy = new StrategyRepository(this.db);
-		this.stats = new StatsRepository(this.db);
-		this.agentPreferences = new AgentPreferenceRepository(this.db);
-		this.apiKeys = new ApiKeyRepository(this.db);
+		this.accounts = new AccountRepository(this.adapter);
+		this.requests = new RequestRepository(this.adapter);
+		this.oauth = new OAuthRepository(this.adapter);
+		this.strategy = new StrategyRepository(this.adapter);
+		this.stats = new StatsRepository(this.adapter);
+		this.agentPreferences = new AgentPreferenceRepository(this.adapter);
+		this.apiKeys = new ApiKeyRepository(this.adapter);
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -230,6 +234,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.db;
 	}
 
+	getAdapter(): DatabaseAdapter {
+		return this.adapter;
+	}
+
 	/**
 	 * Run database integrity check if it was skipped during initialization
 	 * This is useful for server startup where we want to ensure database integrity
@@ -237,10 +245,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	runIntegrityCheck(): void {
 		if (this.fastMode) {
 			// Database was initialized in fast mode, run integrity check now
-			const integrityResult = this.db.query("PRAGMA integrity_check").get() as {
+			const integrityResult = this.adapter.get<{
 				integrity_check: string;
-			};
-			if (integrityResult.integrity_check !== "ok") {
+			}>("PRAGMA integrity_check");
+			if (integrityResult && integrityResult.integrity_check !== "ok") {
 				console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
 				console.error("═".repeat(50));
 				console.error(`Error: ${integrityResult.integrity_check}\n`);
@@ -612,7 +620,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		const payloadCutoff = now - payloadRetentionMs;
 		// Wrap all three DELETEs in one transaction for atomicity: a crash between
 		// statements would otherwise leave orphaned payloads or dangling request rows.
-		return this.db.transaction(() => {
+		return this.adapter.transaction(() => {
 			let removedRequests = 0;
 			if (
 				typeof requestRetentionMs === "number" &&
@@ -628,7 +636,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 				removedRequests,
 				removedPayloads: removedPayloadsByAge + removedOrphans,
 			};
-		})();
+		});
 	}
 
 	// Agent preference operations delegated to repository
@@ -654,8 +662,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 	close(): void {
 		// Ensure all write operations are flushed before closing
-		this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-		this.db.close();
+		this.adapter.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		this.adapter.close();
 	}
 
 	dispose(): void {
@@ -664,35 +672,35 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 	// Optimize database periodically to maintain performance
 	optimize(): void {
-		this.db.exec("PRAGMA optimize");
-		this.db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+		this.adapter.exec("PRAGMA optimize");
+		this.adapter.exec("PRAGMA wal_checkpoint(PASSIVE)");
 	}
 
 	/** Compact and reclaim disk space (blocks DB during operation) */
 	compact(): void {
 		// Ensure WAL is checkpointed and truncated, then VACUUM to rebuild file
-		this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-		this.db.exec("VACUUM");
+		this.adapter.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		this.adapter.exec("VACUUM");
 	}
 
 	/** Incremental vacuum - reclaims space without blocking (non-blocking alternative to VACUUM) */
 	incrementalVacuum(pages?: number): void {
 		// Set auto_vacuum to incremental if not already set
-		const autoVacuumMode = this.db.query("PRAGMA auto_vacuum").get() as {
+		const autoVacuumMode = this.adapter.get<{
 			auto_vacuum: number;
-		};
+		}>("PRAGMA auto_vacuum");
 
-		if (autoVacuumMode.auto_vacuum !== 2) {
+		if (autoVacuumMode && autoVacuumMode.auto_vacuum !== 2) {
 			// Enable incremental vacuum mode (requires VACUUM to take effect)
-			this.db.exec("PRAGMA auto_vacuum = INCREMENTAL");
-			this.db.exec("VACUUM"); // One-time full vacuum to enable incremental mode
+			this.adapter.exec("PRAGMA auto_vacuum = INCREMENTAL");
+			this.adapter.exec("VACUUM"); // One-time full vacuum to enable incremental mode
 		}
 
 		// Run incremental vacuum (reclaims up to N pages, or all free pages if not specified)
 		if (pages) {
-			this.db.exec(`PRAGMA incremental_vacuum(${pages})`);
+			this.adapter.exec(`PRAGMA incremental_vacuum(${pages})`);
 		} else {
-			this.db.exec("PRAGMA incremental_vacuum");
+			this.adapter.exec("PRAGMA incremental_vacuum");
 		}
 	}
 
