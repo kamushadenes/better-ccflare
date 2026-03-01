@@ -1,17 +1,14 @@
-import type { Database } from "bun:sqlite";
-
-type QueryParams = Array<string | number | boolean | null | Buffer>;
+import type { DatabaseAdapter, QueryParams } from "../adapter";
 
 export abstract class BaseRepository<_T> {
-	constructor(protected db: Database) {}
+	constructor(protected db: DatabaseAdapter) {}
 
 	protected query<R>(sql: string, params: QueryParams = []): R[] {
-		return this.db.query<R, QueryParams>(sql).all(...params) as R[];
+		return this.db.query<R>(sql, params);
 	}
 
 	protected get<R>(sql: string, params: QueryParams = []): R | null {
-		const result = this.db.query<R, QueryParams>(sql).get(...params);
-		return result as R | null;
+		return this.db.get<R>(sql, params);
 	}
 
 	protected run(sql: string, params: QueryParams = []): void {
@@ -19,7 +16,6 @@ export abstract class BaseRepository<_T> {
 	}
 
 	protected runWithChanges(sql: string, params: QueryParams = []): number {
-		const result = this.db.run(sql, params);
-		return result.changes;
+		return this.db.run(sql, params).changes;
 	}
 }
