@@ -1,11 +1,17 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import { registerDisposable, unregisterDisposable } from "@better-ccflare/core";
+import type { AsyncDatabaseAdapter, DatabaseDialect } from "./adapter";
+import { AsyncSqliteAdapter } from "./async-sqlite-adapter";
 import {
 	type DatabaseConfig,
 	DatabaseOperations,
 	type DatabaseRetryConfig,
 } from "./database-operations";
 import { migrateFromCcflare } from "./migrate-from-ccflare";
+import { resolveDbPath } from "./paths";
+import { SqliteAdapter } from "./sqlite-adapter";
 
 let instance: DatabaseOperations | null = null;
 let dbPath: string | undefined;
@@ -88,9 +94,30 @@ export function reset(): void {
 	closeAll();
 }
 
+export function getBackendType(): DatabaseDialect {
+	return process.env.DATABASE_URL ? "postgres" : "sqlite";
+}
+
+export async function createAsyncAdapter(options?: {
+	dbPath?: string;
+}): Promise<AsyncDatabaseAdapter> {
+	const dialect = getBackendType();
+	if (dialect === "postgres") {
+		const { PostgresAdapter } = await import("./postgres-adapter");
+		return new PostgresAdapter(process.env.DATABASE_URL as string);
+	}
+	const resolvedPath = options?.dbPath ?? resolveDbPath();
+	const dir = dirname(resolvedPath);
+	mkdirSync(dir, { recursive: true });
+	const sqliteAdapter = new SqliteAdapter(resolvedPath, { create: true });
+	return new AsyncSqliteAdapter(sqliteAdapter);
+}
+
 export const DatabaseFactory = {
 	initialize,
 	getInstance,
 	closeAll,
 	reset,
+	getBackendType,
+	createAsyncAdapter,
 };

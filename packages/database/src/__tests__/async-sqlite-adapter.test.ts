@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AsyncSqliteAdapter } from "../async-sqlite-adapter";
 import { SqliteAdapter } from "../sqlite-adapter";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 describe("AsyncSqliteAdapter", () => {
 	let tmpDir: string;
@@ -16,9 +16,7 @@ describe("AsyncSqliteAdapter", () => {
 			create: true,
 		});
 		adapter = new AsyncSqliteAdapter(sqliteAdapter);
-		sqliteAdapter.exec(
-			"CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)",
-		);
+		sqliteAdapter.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
 	});
 
 	afterEach(() => {
@@ -42,10 +40,7 @@ describe("AsyncSqliteAdapter", () => {
 	});
 
 	test("get returns single row", async () => {
-		sqliteAdapter.run("INSERT INTO test (id, name) VALUES (?, ?)", [
-			1,
-			"bob",
-		]);
+		sqliteAdapter.run("INSERT INTO test (id, name) VALUES (?, ?)", [1, "bob"]);
 		const row = await adapter.get<{ id: number; name: string }>(
 			"SELECT * FROM test WHERE id = ?",
 			[1],
@@ -59,14 +54,11 @@ describe("AsyncSqliteAdapter", () => {
 	});
 
 	test("run returns changes count", async () => {
-		await adapter.run("INSERT INTO test (id, name) VALUES (?, ?)", [
+		await adapter.run("INSERT INTO test (id, name) VALUES (?, ?)", [1, "test"]);
+		const result = await adapter.run("UPDATE test SET name = ? WHERE id = ?", [
+			"updated",
 			1,
-			"test",
 		]);
-		const result = await adapter.run(
-			"UPDATE test SET name = ? WHERE id = ?",
-			["updated", 1],
-		);
 		expect(result.changes).toBe(1);
 	});
 
@@ -132,7 +124,7 @@ describe("AsyncSqliteAdapter", () => {
 			}
 		});
 		expect(nestedError).toBeDefined();
-		expect(nestedError!.message).toBe(
+		expect(nestedError?.message).toBe(
 			"Nested transactions are not supported with SQLite backend",
 		);
 	});

@@ -7,17 +7,25 @@ export type { RuntimeConfig } from "@better-ccflare/config";
 export type {
 	AsyncDatabaseAdapter,
 	DatabaseAdapter,
+	DatabaseDialect,
 	PostgresAdapterOptions,
 	QueryParams,
 	RunResult,
 } from "./adapter";
+export {
+	ensureSchemaAsync,
+	getTableColumnsAsync,
+	runMigrationsAsync,
+} from "./async-migrations";
+export { addPerformanceIndexesAsync } from "./async-performance-indexes";
+export { AsyncSqliteAdapter } from "./async-sqlite-adapter";
 // Re-export other utilities
 export { AsyncDbWriter } from "./async-writer";
 export type {
 	DatabaseConfig,
 	DatabaseRetryConfig,
 } from "./database-operations";
-export { DatabaseFactory } from "./factory";
+export { createAsyncAdapter, DatabaseFactory, getBackendType } from "./factory";
 export { migrateFromCcflare } from "./migrate-from-ccflare";
 export { ensureSchema, runMigrations } from "./migrations";
 export { getLegacyDbPath, resolveDbPath } from "./paths";
