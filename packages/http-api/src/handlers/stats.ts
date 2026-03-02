@@ -54,11 +54,13 @@ export function createStatsHandler(dbOps: DatabaseOperations) {
  */
 export function createStatsResetHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
-		const db = dbOps.getDatabase();
+		const adapter = dbOps.getAsyncAdapter();
 		// Clear request history
-		db.run("DELETE FROM requests");
+		await adapter.run("DELETE FROM requests");
 		// Reset account statistics
-		db.run("UPDATE accounts SET request_count = 0, session_request_count = 0");
+		await adapter.run(
+			"UPDATE accounts SET request_count = 0, session_request_count = 0",
+		);
 
 		return jsonResponse({
 			success: true,

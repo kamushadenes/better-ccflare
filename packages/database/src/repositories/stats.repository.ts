@@ -38,7 +38,7 @@ export class StatsRepository {
 		const stats = (await this.db.get<AggregatedStats>(
 			`SELECT
 				COUNT(*) as totalRequests,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
+				SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successfulRequests,
 				AVG(response_time_ms) as avgResponseTime,
 				SUM(input_tokens) as inputTokens,
 				SUM(output_tokens) as outputTokens,
@@ -85,7 +85,7 @@ export class StatsRepository {
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
 				GROUP BY COALESCE(a.id, ?), COALESCE(a.name, ?)
-				HAVING requestCount > 0
+				HAVING COUNT(r.id) > 0
 				ORDER BY requestCount DESC
 				LIMIT ?
 			`
@@ -125,7 +125,7 @@ export class StatsRepository {
 			`SELECT 
 				account_used as accountId,
 				COUNT(*) as total,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+				SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successful
 			FROM requests
 			WHERE account_used IN (${placeholders})
 			GROUP BY account_used`,
@@ -201,7 +201,7 @@ export class StatsRepository {
 			SELECT
 				mc.model,
 				mc.count,
-				ROUND(CAST(mc.count AS REAL) / t.total * 100, 2) as percentage
+				ROUND(CAST(mc.count AS NUMERIC) / t.total * 100, 2) as percentage
 			FROM model_counts mc, total t
 			ORDER BY mc.count DESC
 			LIMIT ?`,
@@ -235,7 +235,7 @@ export class StatsRepository {
 			FROM requests
 			WHERE api_key_id IS NOT NULL
 			GROUP BY api_key_id, api_key_name
-			HAVING requests > 0
+			HAVING COUNT(*) > 0
 			ORDER BY requests DESC`,
 		)) as Array<{
 			id: string;
@@ -265,7 +265,7 @@ export class StatsRepository {
 			`SELECT
 				api_key_id as apiKeyId,
 				COUNT(*) as total,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful
+				SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successful
 			FROM requests
 			WHERE api_key_id IN (${placeholders})
 			GROUP BY api_key_id`,

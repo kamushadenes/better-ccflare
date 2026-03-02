@@ -301,8 +301,8 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			`
 			SELECT 
 				COUNT(*) as total_requests,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
-				SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed_requests,
+				SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successful_requests,
+				SUM(CASE WHEN success = false THEN 1 ELSE 0 END) as failed_requests,
 				AVG(response_time_ms) as avg_response_time
 			FROM requests
 			${whereClause}
@@ -352,7 +352,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			`
 			SELECT 
 				COUNT(*) as total_requests,
-				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
+				SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successful_requests,
 				AVG(response_time_ms) as avg_response_time,
 				SUM(total_tokens) as total_tokens,
 				SUM(cost_usd) as total_cost_usd,
@@ -408,7 +408,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			`
 			SELECT error_message
 			FROM requests
-			WHERE success = 0 AND error_message IS NOT NULL
+			WHERE success = false AND error_message IS NOT NULL
 			ORDER BY timestamp DESC
 			LIMIT ?
 		`,
@@ -439,7 +439,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				r.account_used as account_id,
 				a.name as account_name,
 				COUNT(*) as request_count,
-				SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate
+				SUM(CASE WHEN r.success = true THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate
 			FROM requests r
 			LEFT JOIN accounts a ON r.account_used = a.id
 			${whereClause}

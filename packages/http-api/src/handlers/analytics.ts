@@ -107,9 +107,9 @@ export function createAnalyticsHandler(context: APIContext) {
 		}
 
 		if (statusFilter === "success") {
-			conditions.push("success = 1");
+			conditions.push("success = true");
 		} else if (statusFilter === "error") {
-			conditions.push("success = 0");
+			conditions.push("success = false");
 		}
 
 		const whereClause = conditions.join(" AND ");
@@ -135,7 +135,7 @@ export function createAnalyticsHandler(context: APIContext) {
 						COUNT(*) as requests,
 						SUM(COALESCE(total_tokens, 0)) as tokens,
 						SUM(COALESCE(cost_usd, 0)) as cost_usd,
-						SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests,
+						SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successful_requests,
 						SUM(COALESCE(cache_read_input_tokens, 0)) as cache_read_input,
 						SUM(COALESCE(input_tokens, 0)) as input_tokens_sum,
 						SUM(COALESCE(cache_creation_input_tokens, 0)) as cache_creation_input,
@@ -163,11 +163,11 @@ export function createAnalyticsHandler(context: APIContext) {
 					SELECT
 						COALESCE(a.name, ?) as name,
 						COUNT(r.id) as requests,
-						SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) as successful_requests
+						SUM(CASE WHEN r.success = true THEN 1 ELSE 0 END) as successful_requests
 					FROM filtered_requests r
 					LEFT JOIN accounts a ON a.id = r.account_used
 					GROUP BY name
-					HAVING requests > 0
+					HAVING COUNT(*) > 0
 					ORDER BY requests DESC
 				),
 				-- API key performance
@@ -176,11 +176,11 @@ export function createAnalyticsHandler(context: APIContext) {
 						api_key_id as id,
 						api_key_name as name,
 						COUNT(*) as requests,
-						SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_requests
+						SUM(CASE WHEN success = true THEN 1 ELSE 0 END) as successful_requests
 					FROM filtered_requests
 					WHERE api_key_id IS NOT NULL
 					GROUP BY api_key_id, api_key_name
-					HAVING requests > 0
+					HAVING COUNT(*) > 0
 					ORDER BY requests DESC
 				),
 				-- Model performance metrics
@@ -190,7 +190,7 @@ export function createAnalyticsHandler(context: APIContext) {
 						AVG(response_time_ms) as avg_response_time,
 						MAX(response_time_ms) as max_response_time,
 						COUNT(*) as total_requests,
-						SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
+						SUM(CASE WHEN success = false THEN 1 ELSE 0 END) as error_count,
 						AVG(output_tokens_per_second) as avg_tokens_per_second,
 						MIN(CASE WHEN output_tokens_per_second > 0 THEN output_tokens_per_second ELSE NULL END) as min_tokens_per_second,
 						MAX(output_tokens_per_second) as max_tokens_per_second
@@ -216,7 +216,7 @@ export function createAnalyticsHandler(context: APIContext) {
 				SELECT
 					-- Totals
 					(SELECT COUNT(*) FROM filtered_requests) as total_requests,
-					(SELECT SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) FROM filtered_requests) as success_rate,
+					(SELECT SUM(CASE WHEN success = true THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) FROM filtered_requests) as success_rate,
 					(SELECT AVG(response_time_ms) FROM filtered_requests) as avg_response_time,
 					(SELECT SUM(COALESCE(total_tokens, 0)) FROM filtered_requests) as total_tokens,
 					(SELECT SUM(COALESCE(cost_usd, 0)) FROM filtered_requests) as total_cost_usd,
@@ -260,8 +260,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					COUNT(*) as requests,
 					SUM(COALESCE(total_tokens, 0)) as tokens,
 					SUM(COALESCE(cost_usd, 0)) as cost_usd,
-					SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
-					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
+					SUM(CASE WHEN success = true THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
+					SUM(CASE WHEN success = false THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
 					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 /
 						NULLIF(SUM(COALESCE(input_tokens, 0) + COALESCE(cache_read_input_tokens, 0) + COALESCE(cache_creation_input_tokens, 0)), 0) as cache_hit_rate,
 					AVG(response_time_ms) as avg_response_time,
@@ -317,14 +317,14 @@ export function createAnalyticsHandler(context: APIContext) {
 						COALESCE(a.name, ?) as name,
 						NULL as count,
 						COUNT(r.id) as requests,
-						SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate,
+						SUM(CASE WHEN r.success = true THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate,
 						NULL as cost_usd,
 						NULL as total_tokens
 					FROM requests r
 					LEFT JOIN accounts a ON a.id = r.account_used
 					WHERE ${whereClause}
 					GROUP BY name
-					HAVING requests > 0
+					HAVING COUNT(*) > 0
 					ORDER BY requests DESC
 					LIMIT 10
 				)
@@ -355,13 +355,13 @@ export function createAnalyticsHandler(context: APIContext) {
 						api_key_name as name,
 						NULL as count,
 						COUNT(*) as requests,
-						SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
+						SUM(CASE WHEN success = true THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 						NULL as cost_usd,
 						NULL as total_tokens
 					FROM requests r
 					WHERE ${whereClause} AND api_key_id IS NOT NULL
 					GROUP BY api_key_id, api_key_name
-					HAVING requests > 0
+					HAVING COUNT(*) > 0
 					ORDER BY requests DESC
 					LIMIT 10
 				)
@@ -450,8 +450,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					AVG(response_time_ms) as avg_response_time,
 					MAX(response_time_ms) as max_response_time,
 					COUNT(*) as total_requests,
-					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
-					SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
+					SUM(CASE WHEN success = false THEN 1 ELSE 0 END) as error_count,
+					SUM(CASE WHEN success = false THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
 					AVG(output_tokens_per_second) as avg_tokens_per_second,
 					MIN(CASE WHEN pr >= 0.95 THEN response_time_ms END) as p95_response_time,
 					MIN(CASE WHEN output_tokens_per_second > 0 THEN output_tokens_per_second ELSE NULL END) as min_tokens_per_second,
