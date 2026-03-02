@@ -211,8 +211,23 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 		if (dialect === "postgres") {
 			const adapter = await createAsyncAdapter();
+			// Test connection immediately - crash fast if PostgreSQL is unreachable
+			try {
+				await (adapter as any).testConnection();
+				console.log("[Database] PostgreSQL connection verified");
+			} catch (err) {
+				console.error(
+					"[Database] FATAL: PostgreSQL connection failed:",
+					(err as Error).message,
+				);
+				console.error(
+					"[Database] DATABASE_URL is set but the database is unreachable. Crashing.",
+				);
+				process.exit(1);
+			}
 			// Run async migrations for PostgreSQL
 			await runMigrationsAsync(adapter);
+			console.log("[Database] PostgreSQL migrations completed");
 			return new DatabaseOperations(adapter, { retryConfig, fastMode });
 		}
 

@@ -65,6 +65,15 @@ export class PostgresAdapter implements AsyncDatabaseAdapter {
 		await this.activeSql.unsafe(sql);
 	}
 
+	async testConnection(): Promise<void> {
+		const result = await this.sql`SELECT 1 as ok`;
+		if (!result || result.length === 0) {
+			throw new Error(
+				"PostgreSQL connection test failed: no result from SELECT 1",
+			);
+		}
+	}
+
 	async transaction<T>(fn: () => Promise<T>): Promise<T> {
 		return this.sql.begin(async (tx) => {
 			return this.txStorage.run(tx, fn);

@@ -1251,5 +1251,8 @@ if (import.meta.main) {
 	}
 
 	// Start the server asynchronously
-	void startServer({ port, sslKeyPath, sslCertPath });
+	startServer({ port, sslKeyPath, sslCertPath }).catch((err) => {
+		console.error("[Server] FATAL startup error:", err);
+		process.exit(1);
+	});
 }
