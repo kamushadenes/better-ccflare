@@ -46,7 +46,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				status_code, success, error_message, response_time_ms, failover_attempts,
 				api_key_id, api_key_name
 			)
-			VALUES (?, ?, ?, ?, ?, ?, 0, NULL, 0, 0, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, false, NULL, 0, 0, ?, ?)
 		`,
 			[
 				id,
@@ -70,7 +70,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			data.path,
 			data.accountUsed,
 			data.statusCode,
-			data.success ? 1 : 0,
+			data.success,
 			data.errorMessage,
 			data.responseTime,
 			data.failoverAttempts,
@@ -266,7 +266,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 			path: string;
 			account_used: string | null;
 			status_code: number | null;
-			success: 0 | 1;
+			success: 0 | 1 | boolean;
 			response_time_ms: number | null;
 		}>(
 			`
@@ -279,7 +279,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		);
 		return rows.map((row) => ({
 			...row,
-			success: row.success === 1,
+			success: !!row.success,
 		}));
 	}
 

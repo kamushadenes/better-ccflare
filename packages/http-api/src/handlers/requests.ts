@@ -41,7 +41,7 @@ export function createRequestsSummaryHandler(dbOps: DatabaseOperations) {
 			account_used: string | null;
 			account_name: string | null;
 			status_code: number | null;
-			success: 0 | 1;
+			success: 0 | 1 | boolean;
 			error_message: string | null;
 			response_time_ms: number | null;
 			failover_attempts: number;
@@ -74,7 +74,7 @@ export function createRequestsSummaryHandler(dbOps: DatabaseOperations) {
 			path: request.path,
 			accountUsed: request.account_name || request.account_used,
 			statusCode: request.status_code,
-			success: request.success === 1,
+			success: !!request.success,
 			errorMessage: request.error_message,
 			responseTimeMs: request.response_time_ms,
 			failoverAttempts: request.failover_attempts,

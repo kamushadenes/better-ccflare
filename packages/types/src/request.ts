@@ -6,7 +6,7 @@ export interface RequestRow {
 	path: string;
 	account_used: string | null;
 	status_code: number | null;
-	success: 0 | 1;
+	success: 0 | 1 | boolean;
 	error_message: string | null;
 	response_time_ms: number | null;
 	failover_attempts: number;
@@ -121,7 +121,7 @@ export function toRequest(row: RequestRow): Request {
 		path: row.path,
 		accountUsed: row.account_used,
 		statusCode: row.status_code,
-		success: row.success === 1,
+		success: !!row.success,
 		errorMessage: row.error_message,
 		responseTimeMs: row.response_time_ms,
 		failoverAttempts: row.failover_attempts,
