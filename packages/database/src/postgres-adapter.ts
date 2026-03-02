@@ -16,7 +16,7 @@ export class PostgresAdapter implements AsyncDatabaseAdapter {
 
 	constructor(connectionString: string, options?: PostgresAdapterOptions) {
 		this.sql = postgres(connectionString, {
-			max: options?.max ?? 10,
+			max: options?.max ?? 3,
 			idle_timeout: options?.idleTimeout ?? 30,
 			connect_timeout: options?.connectTimeout ?? 30,
 			max_lifetime: options?.maxLifetime ?? null,

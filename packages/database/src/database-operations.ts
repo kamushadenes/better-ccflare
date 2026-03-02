@@ -211,19 +211,23 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 
 		if (dialect === "postgres") {
 			const adapter = await createAsyncAdapter();
-			// Test connection immediately - crash fast if PostgreSQL is unreachable
-			try {
-				await (adapter as any).testConnection();
-				console.log("[Database] PostgreSQL connection verified");
-			} catch (err) {
-				console.error(
-					"[Database] FATAL: PostgreSQL connection failed:",
-					(err as Error).message,
-				);
-				console.error(
-					"[Database] DATABASE_URL is set but the database is unreachable. Crashing.",
-				);
-				process.exit(1);
+			// Test connection with retries - avoids crash loops that burn Cloud SQL API quota
+			const maxRetries = 5;
+			for (let attempt = 1; attempt <= maxRetries; attempt++) {
+				try {
+					await (adapter as any).testConnection();
+					console.log("[Database] PostgreSQL connection verified");
+					break;
+				} catch (err) {
+					console.error(`[Database] PostgreSQL connection attempt ${attempt}/${maxRetries} failed:`, (err as Error).message);
+					if (attempt === maxRetries) {
+						console.error("[Database] FATAL: All connection attempts exhausted. Crashing.");
+						process.exit(1);
+					}
+					const delay = attempt * 2000;
+					console.log(`[Database] Retrying in ${delay}ms...`);
+					await new Promise(r => setTimeout(r, delay));
+				}
 			}
 			// Run async migrations for PostgreSQL
 			await runMigrationsAsync(adapter);
