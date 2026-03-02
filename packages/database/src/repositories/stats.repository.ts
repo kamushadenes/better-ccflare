@@ -168,12 +168,15 @@ export class StatsRepository {
 	 */
 	async getRecentErrors(limit = 10): Promise<string[]> {
 		const errors = (await this.db.query(
-			`SELECT DISTINCT error_message
-			FROM requests
-			WHERE error_message IS NOT NULL
-				AND error_message != ''
-			ORDER BY timestamp DESC
-			LIMIT ?`,
+			`SELECT error_message FROM (
+				SELECT error_message, MAX(timestamp) as latest
+				FROM requests
+				WHERE error_message IS NOT NULL
+					AND error_message != ''
+				GROUP BY error_message
+				ORDER BY latest DESC
+				LIMIT ?
+			) sub`,
 			[limit],
 		)) as Array<{ error_message: string }>;
 
