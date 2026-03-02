@@ -84,7 +84,7 @@ export class StatsRepository {
 					MAX(COALESCE(a.total_requests, 0)) as totalRequests
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
-				GROUP BY COALESCE(a.id, ?), COALESCE(a.name, ?)
+				GROUP BY 1, 2
 				HAVING COUNT(r.id) > 0
 				ORDER BY requestCount DESC
 				LIMIT ?
@@ -102,7 +102,7 @@ export class StatsRepository {
 			`;
 
 		const params = includeUnauthenticated
-			? [NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit]
+			? [NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit]
 			: [limit];
 
 		const accountStats = (await this.db.query(
