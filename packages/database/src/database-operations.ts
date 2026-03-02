@@ -219,14 +219,19 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					console.log("[Database] PostgreSQL connection verified");
 					break;
 				} catch (err) {
-					console.error(`[Database] PostgreSQL connection attempt ${attempt}/${maxRetries} failed:`, (err as Error).message);
+					console.error(
+						`[Database] PostgreSQL connection attempt ${attempt}/${maxRetries} failed:`,
+						(err as Error).message,
+					);
 					if (attempt === maxRetries) {
-						console.error("[Database] FATAL: All connection attempts exhausted. Crashing.");
+						console.error(
+							"[Database] FATAL: All connection attempts exhausted. Crashing.",
+						);
 						process.exit(1);
 					}
 					const delay = attempt * 2000;
 					console.log(`[Database] Retrying in ${delay}ms...`);
-					await new Promise(r => setTimeout(r, delay));
+					await new Promise((r) => setTimeout(r, delay));
 				}
 			}
 			// Run async migrations for PostgreSQL

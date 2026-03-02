@@ -117,7 +117,7 @@ export class APIRouter {
 		const configHandlers = createConfigHandlers(config, this.context.runtime);
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
-		const analyticsHandler = createAnalyticsHandler(this.context);
+		const analyticsHandler = createAnalyticsHandler(dbOps);
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
 		const agentsHandler = createAgentsListHandler(dbOps);

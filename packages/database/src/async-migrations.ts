@@ -297,7 +297,6 @@ export async function runMigrationsAsync(
 		}
 	}
 
-
 	await adapter.transaction(async () => {
 		// Check accounts columns
 		const accountsColumns = await getTableColumnsAsync(adapter, "accounts");
