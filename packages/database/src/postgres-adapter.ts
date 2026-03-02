@@ -25,6 +25,17 @@ export class PostgresAdapter implements AsyncDatabaseAdapter {
 					? "require"
 					: options.ssl
 				: undefined,
+			types: {
+				// Parse BIGINT (OID 20) as JavaScript number instead of string.
+				// Our BIGINT values are ms-epoch timestamps which fit safely in
+				// Number.MAX_SAFE_INTEGER (2^53 - 1 ≈ 9007 trillion).
+				bigint: {
+					to: 20,
+					from: [20],
+					parse: (x: string) => Number(x),
+					serialize: (x: number) => x.toString(),
+				},
+			},
 		});
 	}
 
