@@ -510,7 +510,10 @@ export default async function startServer(options?: {
 	// Run integrity check if database was initialized in fast mode
 	dbOps.runIntegrityCheck();
 
-	const db = dbOps.getDatabase();
+	const db =
+		DatabaseFactory.getBackendType() === "sqlite"
+			? dbOps.getDatabase()
+			: undefined;
 	const log = container.resolve<Logger>(SERVICE_KEYS.Logger);
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
 
@@ -678,8 +681,12 @@ export default async function startServer(options?: {
 	});
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
-	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
-	autoRefreshScheduler.start();
+	if (db) {
+		autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
+	}
+	if (autoRefreshScheduler) {
+		autoRefreshScheduler.start();
+	}
 
 	// Initialize token health monitoring service
 	startGlobalTokenHealthChecks(async () => dbOps.getAllAccounts());

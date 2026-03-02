@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import crypto from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -39,56 +38,27 @@ const log = new Logger("AccountsHandler");
 /**
  * Create an accounts list handler
  */
-export function createAccountsListHandler(db: Database) {
+export function createAccountsListHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
 		const now = Date.now();
 		const sessionDuration = 5 * 60 * 60 * 1000; // 5 hours
 
-		const accounts = db
-			.query(
-				`
-				SELECT
-					id,
-					name,
-					provider,
-					request_count,
-					total_requests,
-					last_used,
-					created_at,
-					expires_at,
-					rate_limited_until,
-					rate_limit_reset,
-					rate_limit_status,
-					rate_limit_remaining,
-					session_start,
-					session_request_count,
-					refresh_token,
-					access_token,
-					COALESCE(paused, 0) as paused,
-					COALESCE(priority, 0) as priority,
-					COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
-					COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
-					custom_endpoint,
-					model_mappings,
-					cross_region_mode,
-					CASE
-						WHEN expires_at > ?1 THEN 1
-						ELSE 0
-					END as token_valid,
-					CASE
-						WHEN rate_limited_until > ?2 THEN 1
-						ELSE 0
-					END as rate_limited,
-					CASE
-						WHEN session_start IS NOT NULL AND ?3 - session_start < ?4 THEN
-							'Active: ' || session_request_count || ' reqs'
-						ELSE '-'
-					END as session_info
-				FROM accounts
-				ORDER BY priority DESC, request_count DESC
-				`,
-			)
-			.all(now, now, now, sessionDuration) as Array<{
+		const rawAccounts = await dbOps.getAllAccounts();
+		const accounts = rawAccounts.map((a) => ({
+			...a,
+			paused: (a.paused ? 1 : 0) as 0 | 1,
+			priority: a.priority ?? 0,
+			auto_fallback_enabled: (a.auto_fallback_enabled ? 1 : 0) as 0 | 1,
+			auto_refresh_enabled: (a.auto_refresh_enabled ? 1 : 0) as 0 | 1,
+			token_valid: (a.expires_at && a.expires_at > now ? 1 : 0) as 0 | 1,
+			rate_limited: (a.rate_limited_until && a.rate_limited_until > now
+				? 1
+				: 0) as 0 | 1,
+			session_info:
+				a.session_start && now - a.session_start < sessionDuration
+					? `Active: ${a.session_request_count ?? 0} reqs`
+					: "-",
+		})) as Array<{
 			id: string;
 			name: string;
 			provider: string | null;

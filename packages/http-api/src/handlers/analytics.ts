@@ -59,6 +59,9 @@ function getRangeConfig(range: string): {
 export function createAnalyticsHandler(context: APIContext) {
 	return async (params: URLSearchParams): Promise<Response> => {
 		const { db } = context;
+		if (!db) {
+			return jsonResponse({ error: "Analytics requires SQLite backend" }, 501);
+		}
 		const range = params.get("range") ?? "24h";
 		const { startMs, bucket } = getRangeConfig(range);
 		const mode = params.get("mode") ?? "normal";

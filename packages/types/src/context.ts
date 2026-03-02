@@ -8,7 +8,7 @@ import type { StrategyStore } from "./strategy";
 
 // API context for HTTP handlers
 export interface APIContext {
-	db: Database;
+	db?: Database;
 	config: Config;
 	dbOps: DatabaseOperations;
 	auth?: {

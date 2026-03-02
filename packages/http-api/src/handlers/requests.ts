@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { RequestResponse } from "../types";
@@ -31,19 +30,10 @@ function truncateBase64(body: unknown): {
 /**
  * Create a requests summary handler (existing functionality)
  */
-export function createRequestsSummaryHandler(db: Database) {
-	return (limit: number = 50): Response => {
-		const requests = db
-			.query(
-				`
-				SELECT r.*, a.name as account_name
-				FROM requests r
-				LEFT JOIN accounts a ON r.account_used = a.id
-				ORDER BY r.timestamp DESC
-				LIMIT ?1
-			`,
-			)
-			.all(limit) as Array<{
+export function createRequestsSummaryHandler(dbOps: DatabaseOperations) {
+	return async (limit: number = 50): Promise<Response> => {
+		const adapter = dbOps.getAsyncAdapter();
+		const requests = await adapter.query<{
 			id: string;
 			timestamp: number;
 			method: string;
@@ -68,7 +58,14 @@ export function createRequestsSummaryHandler(db: Database) {
 			output_tokens_per_second: number | null;
 			api_key_id: string | null;
 			api_key_name: string | null;
-		}>;
+		}>(
+			`SELECT r.*, a.name as account_name
+			FROM requests r
+			LEFT JOIN accounts a ON r.account_used = a.id
+			ORDER BY r.timestamp DESC
+			LIMIT ?`,
+			[limit],
+		);
 
 		const response: RequestResponse[] = requests.map((request) => ({
 			id: request.id,
