@@ -1,11 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 2 — PostgreSQL Adapter Implementation. Plan 02 complete.
+Phase 4 — Backend Selection & Repository Updates. Planning complete.
 
 ## Progress
 Phase 1: Plan 2/2 complete
 Phase 2: Plan 2/2 complete
+Phase 3: Plan 2/2 complete
+Phase 4: Plan 1/3 complete
 
 ## Completed
 - [x] Forked tombii/better-ccflare to kamushadenes/better-ccflare
@@ -16,6 +18,9 @@ Phase 2: Plan 2/2 complete
 - [x] Phase 1 Plan 02: Refactored repositories + DatabaseOperations to use adapter pattern
 - [x] Phase 2 Plan 01: AsyncDatabaseAdapter interface + SQL utilities (13 TDD tests)
 - [x] Phase 2 Plan 02: PostgresAdapter + retry error detection (8 unit + 16 integration tests)
+- [x] Phase 3 Plan 01: Async migration functions (getTableColumnsAsync, ensureSchemaAsync, runMigrationsAsync, addPerformanceIndexesAsync) + 3 unit tests
+- [x] Phase 3 Plan 02: PostgreSQL migration integration tests (8 tests, gated by TEST_DATABASE_URL)
+- [x] Phase 4 Plan 01: AsyncSqliteAdapter bridge + DatabaseDialect type + factory backend detection (15 TDD tests)
 
 ## Decisions Log
 | Date | Decision | Rationale |
@@ -33,6 +38,9 @@ Phase 2: Plan 2/2 complete
 | 2026-03-01 | Simple regex for placeholder conversion | No ? in SQL string literals in codebase; safe approach |
 | 2026-03-01 | AsyncLocalStorage for transaction scoping | Routes queries to active tx without passing connection explicitly |
 | 2026-03-01 | Integration tests gated by TEST_DATABASE_URL | Safe for CI without PostgreSQL; describe.skip pattern |
+| 2026-03-01 | AsyncSqliteAdapter uses BEGIN/COMMIT/ROLLBACK | Explicit transaction control rather than wrapping sync transaction method |
+| 2026-03-01 | Nested transaction guard via inTransaction flag | Prevents SQLite re-entrant transaction errors |
+| 2026-03-01 | Dynamic import for PostgresAdapter in factory | Avoids loading postgres.js when using SQLite backend |
 
 ## Performance Metrics
 | Phase | Plan | Duration | Tasks | Files |
@@ -41,9 +49,12 @@ Phase 2: Plan 2/2 complete
 | 01 | 02 | 404s | 3 | 5 |
 | 02 | 01 | 645s | 4 | 5 |
 | 02 | 02 | 562s | 3 | 5 |
+| 03 | 01 | 457s | 4 | 4 |
+| 03 | 02 | 190s | 1 | 1 |
+| 04 | 01 | 648s | 2 | 8 |
 
 ## Last Session
-- **Stopped at:** Completed 02-02-PLAN.md
+- **Stopped at:** Completed 04-01-PLAN.md
 
 ## Blockers
 None.

@@ -4,7 +4,10 @@ import { dirname } from "node:path";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
 import type { Account, StrategyStore } from "@better-ccflare/types";
-import type { DatabaseAdapter } from "./adapter";
+import type { AsyncDatabaseAdapter, DatabaseAdapter } from "./adapter";
+import { runMigrationsAsync } from "./async-migrations";
+import { AsyncSqliteAdapter } from "./async-sqlite-adapter";
+import { createAsyncAdapter, getBackendType } from "./factory";
 import { ensureSchema, runMigrations } from "./migrations";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
@@ -17,7 +20,7 @@ import {
 } from "./repositories/request.repository";
 import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
-import { withDatabaseRetrySync } from "./retry";
+import { withDatabaseRetry } from "./retry";
 import { SqliteAdapter } from "./sqlite-adapter";
 
 export interface DatabaseConfig {
@@ -148,8 +151,9 @@ function configureSqlite(
  * Provides a clean, organized interface for database operations
  */
 export class DatabaseOperations implements StrategyStore, Disposable {
-	private db: Database;
-	private adapter: SqliteAdapter;
+	private asyncAdapter: AsyncDatabaseAdapter;
+	private syncAdapter?: SqliteAdapter;
+	private db?: Database;
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
@@ -164,58 +168,79 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private agentPreferences: AgentPreferenceRepository;
 	private apiKeys: ApiKeyRepository;
 
-	constructor(
-		dbPath?: string,
-		dbConfig?: DatabaseConfig,
-		retryConfig?: DatabaseRetryConfig,
-		fastMode = false,
+	private constructor(
+		asyncAdapter: AsyncDatabaseAdapter,
+		opts: {
+			syncAdapter?: SqliteAdapter;
+			db?: Database;
+			dbConfig?: DatabaseConfig;
+			retryConfig?: DatabaseRetryConfig;
+			fastMode?: boolean;
+		},
 	) {
-		this.fastMode = fastMode;
-		const resolvedPath = dbPath ?? resolveDbPath();
-
-		// Default database configuration optimized for distributed filesystems
-		// More conservative settings to prevent corruption on Rook Ceph
-		this.dbConfig = {
-			walMode: true,
-			busyTimeoutMs: 10000, // Increased timeout for distributed storage
-			cacheSize: -5000, // Reduced cache size (5MB) for lower memory footprint
-			synchronous: "FULL", // Full synchronous mode for data safety
-			mmapSize: 0, // Disable memory-mapped I/O on distributed filesystems
-			pageSize: 2048, // Use 2KB pages instead of default 4KB for better memory efficiency
-			...dbConfig,
-		};
-
-		// Default retry configuration for database operations
+		this.asyncAdapter = asyncAdapter;
+		this.syncAdapter = opts.syncAdapter;
+		this.db = opts.db;
+		this.dbConfig = opts.dbConfig ?? {};
 		this.retryConfig = {
 			attempts: 3,
 			delayMs: 100,
 			backoff: 2,
 			maxDelayMs: 5000,
-			...retryConfig,
+			...opts.retryConfig,
 		};
+		this.fastMode = opts.fastMode ?? false;
 
-		// Ensure the directory exists
-		const dir = dirname(resolvedPath);
-		mkdirSync(dir, { recursive: true });
+		// Initialize all repos with asyncAdapter
+		this.accounts = new AccountRepository(asyncAdapter);
+		this.requests = new RequestRepository(asyncAdapter);
+		this.oauth = new OAuthRepository(asyncAdapter);
+		this.strategy = new StrategyRepository(asyncAdapter);
+		this.stats = new StatsRepository(asyncAdapter);
+		this.agentPreferences = new AgentPreferenceRepository(asyncAdapter);
+		this.apiKeys = new ApiKeyRepository(asyncAdapter);
+	}
 
-		this.adapter = new SqliteAdapter(resolvedPath, { create: true });
-		this.db = this.adapter.getRawDatabase();
+	static async create(
+		dbPath?: string,
+		dbConfig?: DatabaseConfig,
+		retryConfig?: DatabaseRetryConfig,
+		fastMode = false,
+	): Promise<DatabaseOperations> {
+		const dialect = getBackendType();
 
-		// Apply SQLite configuration for distributed filesystem optimization
-		// Skip expensive integrity checks in fast mode for CLI commands
-		configureSqlite(this.db, this.dbConfig, fastMode);
+		if (dialect === "postgres") {
+			const adapter = await createAsyncAdapter();
+			// Run async migrations for PostgreSQL
+			await runMigrationsAsync(adapter);
+			return new DatabaseOperations(adapter, { retryConfig, fastMode });
+		}
 
-		ensureSchema(this.db);
-		runMigrations(this.db, resolvedPath);
-
-		// Initialize repositories
-		this.accounts = new AccountRepository(this.adapter);
-		this.requests = new RequestRepository(this.adapter);
-		this.oauth = new OAuthRepository(this.adapter);
-		this.strategy = new StrategyRepository(this.adapter);
-		this.stats = new StatsRepository(this.adapter);
-		this.agentPreferences = new AgentPreferenceRepository(this.adapter);
-		this.apiKeys = new ApiKeyRepository(this.adapter);
+		// SQLite path (existing logic)
+		const resolvedPath = dbPath ?? resolveDbPath();
+		mkdirSync(dirname(resolvedPath), { recursive: true });
+		const mergedDbConfig: DatabaseConfig = {
+			walMode: true,
+			busyTimeoutMs: 10000,
+			cacheSize: -5000,
+			synchronous: "FULL",
+			mmapSize: 0,
+			pageSize: 2048,
+			...dbConfig,
+		};
+		const sqliteAdapter = new SqliteAdapter(resolvedPath, { create: true });
+		const rawDb = sqliteAdapter.getRawDatabase();
+		configureSqlite(rawDb, mergedDbConfig, fastMode);
+		ensureSchema(rawDb);
+		runMigrations(rawDb, resolvedPath);
+		const asyncAdapter = new AsyncSqliteAdapter(sqliteAdapter);
+		return new DatabaseOperations(asyncAdapter, {
+			syncAdapter: sqliteAdapter,
+			db: rawDb,
+			dbConfig: mergedDbConfig,
+			retryConfig,
+			fastMode,
+		});
 	}
 
 	setRuntimeConfig(runtime: RuntimeConfig): void {
@@ -231,11 +256,25 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	}
 
 	getDatabase(): Database {
+		if (!this.db) {
+			throw new Error(
+				"getDatabase() only available with SQLite. Use getAsyncAdapter().",
+			);
+		}
 		return this.db;
 	}
 
 	getAdapter(): DatabaseAdapter {
-		return this.adapter;
+		if (!this.syncAdapter) {
+			throw new Error(
+				"getAdapter() only available with SQLite. Use getAsyncAdapter().",
+			);
+		}
+		return this.syncAdapter;
+	}
+
+	getAsyncAdapter(): AsyncDatabaseAdapter {
+		return this.asyncAdapter;
 	}
 
 	/**
@@ -243,22 +282,21 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	 * This is useful for server startup where we want to ensure database integrity
 	 */
 	runIntegrityCheck(): void {
-		if (this.fastMode) {
-			// Database was initialized in fast mode, run integrity check now
-			const integrityResult = this.adapter.get<{
-				integrity_check: string;
-			}>("PRAGMA integrity_check");
-			if (integrityResult && integrityResult.integrity_check !== "ok") {
-				console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
-				console.error("═".repeat(50));
-				console.error(`Error: ${integrityResult.integrity_check}\n`);
-				console.error("Your database may be corrupted. To repair it, run:");
-				console.error("  bun run cli --repair-db\n");
-				console.error(`${"═".repeat(50)}\n`);
-				throw new Error(
-					`Database integrity check failed: ${integrityResult.integrity_check}`,
-				);
-			}
+		if (!this.syncAdapter || !this.fastMode) return;
+		// Database was initialized in fast mode, run integrity check now
+		const integrityResult = this.syncAdapter.get<{
+			integrity_check: string;
+		}>("PRAGMA integrity_check");
+		if (integrityResult && integrityResult.integrity_check !== "ok") {
+			console.error("\n❌ DATABASE INTEGRITY CHECK FAILED");
+			console.error("═".repeat(50));
+			console.error(`Error: ${integrityResult.integrity_check}\n`);
+			console.error("Your database may be corrupted. To repair it, run:");
+			console.error("  bun run cli --repair-db\n");
+			console.error(`${"═".repeat(50)}\n`);
+			throw new Error(
+				`Database integrity check failed: ${integrityResult.integrity_check}`,
+			);
 		}
 	}
 
@@ -270,63 +308,57 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	}
 
 	// Account operations delegated to repository with retry logic
-	getAllAccounts(): Account[] {
-		return withDatabaseRetrySync(
-			() => {
-				return this.accounts.findAll();
-			},
+	async getAllAccounts(): Promise<Account[]> {
+		return withDatabaseRetry(
+			() => this.accounts.findAll(),
 			this.retryConfig,
 			"getAllAccounts",
 		);
 	}
 
-	getAccount(accountId: string): Account | null {
-		return withDatabaseRetrySync(
-			() => {
-				return this.accounts.findById(accountId);
-			},
+	async getAccount(accountId: string): Promise<Account | null> {
+		return withDatabaseRetry(
+			() => this.accounts.findById(accountId),
 			this.retryConfig,
 			"getAccount",
 		);
 	}
 
-	updateAccountTokens(
+	async updateAccountTokens(
 		accountId: string,
 		accessToken: string,
 		expiresAt: number,
 		refreshToken?: string,
-	): void {
-		withDatabaseRetrySync(
-			() => {
+	): Promise<void> {
+		return withDatabaseRetry(
+			() =>
 				this.accounts.updateTokens(
 					accountId,
 					accessToken,
 					expiresAt,
 					refreshToken,
-				);
-			},
+				),
 			this.retryConfig,
 			"updateAccountTokens",
 		);
 	}
 
-	updateAccountUsage(accountId: string): void {
+	async updateAccountUsage(accountId: string): Promise<void> {
 		const sessionDuration =
 			this.runtime?.sessionDurationMs || 5 * 60 * 60 * 1000;
-		withDatabaseRetrySync(
-			() => {
-				this.accounts.incrementUsage(accountId, sessionDuration);
-			},
+		return withDatabaseRetry(
+			() => this.accounts.incrementUsage(accountId, sessionDuration),
 			this.retryConfig,
 			"updateAccountUsage",
 		);
 	}
 
-	markAccountRateLimited(accountId: string, until: number): void {
-		withDatabaseRetrySync(
-			() => {
-				this.accounts.setRateLimited(accountId, until);
-			},
+	async markAccountRateLimited(
+		accountId: string,
+		until: number,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.setRateLimited(accountId, until),
 			this.retryConfig,
 			"markAccountRateLimited",
 		);
@@ -337,29 +369,32 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	 * @param now The current timestamp to compare against
 	 * @returns Number of accounts that had their rate_limited_until cleared
 	 */
-	clearExpiredRateLimits(now: number): number {
-		return withDatabaseRetrySync(
-			() => {
-				return this.accounts.clearExpiredRateLimits(now);
-			},
+	async clearExpiredRateLimits(now: number): Promise<number> {
+		return withDatabaseRetry(
+			() => this.accounts.clearExpiredRateLimits(now),
 			this.retryConfig,
 			"clearExpiredRateLimits",
 		);
 	}
 
-	updateAccountRateLimitMeta(
+	async updateAccountRateLimitMeta(
 		accountId: string,
 		status: string,
 		reset: number | null,
 		remaining?: number | null,
-	): void {
-		this.accounts.updateRateLimitMeta(accountId, status, reset, remaining);
+	): Promise<void> {
+		return withDatabaseRetry(
+			() =>
+				this.accounts.updateRateLimitMeta(accountId, status, reset, remaining),
+			this.retryConfig,
+			"updateAccountRateLimitMeta",
+		);
 	}
 
-	forceResetAccountRateLimit(accountId: string): boolean {
-		return withDatabaseRetrySync(
-			() => {
-				const changes = this.accounts.clearRateLimitState(accountId);
+	async forceResetAccountRateLimit(accountId: string): Promise<boolean> {
+		return withDatabaseRetry(
+			async () => {
+				const changes = await this.accounts.clearRateLimitState(accountId);
 				// 0 changes is fine when fields are already null — account still exists
 				return changes >= 0;
 			},
@@ -368,40 +403,84 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
-	pauseAccount(accountId: string): void {
-		this.accounts.pause(accountId);
+	async pauseAccount(accountId: string): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.pause(accountId),
+			this.retryConfig,
+			"pauseAccount",
+		);
 	}
 
-	resumeAccount(accountId: string): void {
-		this.accounts.resume(accountId);
+	async resumeAccount(accountId: string): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.resume(accountId),
+			this.retryConfig,
+			"resumeAccount",
+		);
 	}
 
-	renameAccount(accountId: string, newName: string): void {
-		this.accounts.rename(accountId, newName);
+	async renameAccount(accountId: string, newName: string): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.rename(accountId, newName),
+			this.retryConfig,
+			"renameAccount",
+		);
 	}
 
-	resetAccountSession(accountId: string, timestamp: number): void {
-		this.accounts.resetSession(accountId, timestamp);
+	async resetAccountSession(
+		accountId: string,
+		timestamp: number,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.resetSession(accountId, timestamp),
+			this.retryConfig,
+			"resetAccountSession",
+		);
 	}
 
-	updateAccountRequestCount(accountId: string, count: number): void {
-		this.accounts.updateRequestCount(accountId, count);
+	async updateAccountRequestCount(
+		accountId: string,
+		count: number,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.updateRequestCount(accountId, count),
+			this.retryConfig,
+			"updateAccountRequestCount",
+		);
 	}
 
-	updateAccountPriority(accountId: string, priority: number): void {
-		this.accounts.updatePriority(accountId, priority);
+	async updateAccountPriority(
+		accountId: string,
+		priority: number,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.updatePriority(accountId, priority),
+			this.retryConfig,
+			"updateAccountPriority",
+		);
 	}
 
-	setAutoFallbackEnabled(accountId: string, enabled: boolean): void {
-		this.accounts.setAutoFallbackEnabled(accountId, enabled);
+	async setAutoFallbackEnabled(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.accounts.setAutoFallbackEnabled(accountId, enabled),
+			this.retryConfig,
+			"setAutoFallbackEnabled",
+		);
 	}
 
-	hasAccountsForProvider(provider: string): boolean {
-		return this.accounts.hasAccountsForProvider(provider);
+	async hasAccountsForProvider(provider: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.accounts.hasAccountsForProvider(provider),
+			this.retryConfig,
+			"hasAccountsForProvider",
+		);
 	}
 
 	// Request operations delegated to repository
-	saveRequestMeta(
+	async saveRequestMeta(
 		id: string,
 		method: string,
 		path: string,
@@ -410,8 +489,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		timestamp?: number,
 		apiKeyId?: string,
 		apiKeyName?: string,
-	): void {
-		withDatabaseRetrySync(
+	): Promise<void> {
+		return withDatabaseRetry(
 			() =>
 				this.requests.saveMeta(
 					id,
@@ -428,7 +507,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
-	saveRequest(
+	async saveRequest(
 		id: string,
 		method: string,
 		path: string,
@@ -442,8 +521,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		agentUsed?: string,
 		apiKeyId?: string,
 		apiKeyName?: string,
-	): void {
-		withDatabaseRetrySync(
+	): Promise<void> {
+		return withDatabaseRetry(
 			() =>
 				this.requests.save({
 					id,
@@ -465,173 +544,257 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
-	updateRequestUsage(requestId: string, usage: RequestData["usage"]): void {
-		withDatabaseRetrySync(
+	async updateRequestUsage(
+		requestId: string,
+		usage: RequestData["usage"],
+	): Promise<void> {
+		return withDatabaseRetry(
 			() => this.requests.updateUsage(requestId, usage),
 			this.retryConfig,
 			"updateRequestUsage",
 		);
 	}
 
-	saveRequestPayload(id: string, data: unknown): void {
-		withDatabaseRetrySync(
+	async saveRequestPayload(id: string, data: unknown): Promise<void> {
+		return withDatabaseRetry(
 			() => this.requests.savePayload(id, data),
 			this.retryConfig,
 			"saveRequestPayload",
 		);
 	}
 
-	saveRequestPayloadRaw(id: string, json: string): void {
-		withDatabaseRetrySync(
+	async saveRequestPayloadRaw(id: string, json: string): Promise<void> {
+		return withDatabaseRetry(
 			() => this.requests.savePayloadRaw(id, json),
 			this.retryConfig,
 			"saveRequestPayloadRaw",
 		);
 	}
 
-	getRequestPayload(id: string): unknown | null {
-		return this.requests.getPayload(id);
+	async getRequestPayload(id: string): Promise<unknown | null> {
+		return withDatabaseRetry(
+			() => this.requests.getPayload(id),
+			this.retryConfig,
+			"getRequestPayload",
+		);
 	}
 
-	listRequestPayloads(limit = 50): Array<{ id: string; json: string }> {
-		return this.requests.listPayloads(limit);
-	}
-
-	listRequestPayloadsWithAccountNames(
+	async listRequestPayloads(
 		limit = 50,
-	): Array<{ id: string; json: string; account_name: string | null }> {
-		return this.requests.listPayloadsWithAccountNames(limit);
+	): Promise<Array<{ id: string; json: string }>> {
+		return withDatabaseRetry(
+			() => this.requests.listPayloads(limit),
+			this.retryConfig,
+			"listRequestPayloads",
+		);
+	}
+
+	async listRequestPayloadsWithAccountNames(
+		limit = 50,
+	): Promise<Array<{ id: string; json: string; account_name: string | null }>> {
+		return withDatabaseRetry(
+			() => this.requests.listPayloadsWithAccountNames(limit),
+			this.retryConfig,
+			"listRequestPayloadsWithAccountNames",
+		);
 	}
 
 	// OAuth operations delegated to repository
-	createOAuthSession(
+	async createOAuthSession(
 		sessionId: string,
 		accountName: string,
 		verifier: string,
 		mode: "console" | "claude-oauth",
 		customEndpoint?: string,
 		ttlMinutes = 10,
-	): void {
-		this.oauth.createSession(
-			sessionId,
-			accountName,
-			verifier,
-			mode,
-			customEndpoint,
-			ttlMinutes,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() =>
+				this.oauth.createSession(
+					sessionId,
+					accountName,
+					verifier,
+					mode,
+					customEndpoint,
+					ttlMinutes,
+				),
+			this.retryConfig,
+			"createOAuthSession",
 		);
 	}
 
-	getOAuthSession(sessionId: string): {
+	async getOAuthSession(sessionId: string): Promise<{
 		accountName: string;
 		verifier: string;
 		mode: "console" | "claude-oauth";
 		customEndpoint?: string;
-	} | null {
-		return this.oauth.getSession(sessionId);
+	} | null> {
+		return withDatabaseRetry(
+			() => this.oauth.getSession(sessionId),
+			this.retryConfig,
+			"getOAuthSession",
+		);
 	}
 
-	deleteOAuthSession(sessionId: string): void {
-		this.oauth.deleteSession(sessionId);
+	async deleteOAuthSession(sessionId: string): Promise<void> {
+		return withDatabaseRetry(
+			() => this.oauth.deleteSession(sessionId),
+			this.retryConfig,
+			"deleteOAuthSession",
+		);
 	}
 
-	cleanupExpiredOAuthSessions(): number {
-		return this.oauth.cleanupExpiredSessions();
+	async cleanupExpiredOAuthSessions(): Promise<number> {
+		return withDatabaseRetry(
+			() => this.oauth.cleanupExpiredSessions(),
+			this.retryConfig,
+			"cleanupExpiredOAuthSessions",
+		);
 	}
 
 	// Strategy operations delegated to repository
-	getStrategy(name: string): {
+	async getStrategy(name: string): Promise<{
 		name: string;
 		config: Record<string, unknown>;
 		updatedAt: number;
-	} | null {
-		return this.strategy.getStrategy(name);
+	} | null> {
+		return withDatabaseRetry(
+			() => this.strategy.getStrategy(name),
+			this.retryConfig,
+			"getStrategy",
+		);
 	}
 
-	setStrategy(name: string, config: Record<string, unknown>): void {
-		this.strategy.set(name, config);
+	async setStrategy(
+		name: string,
+		config: Record<string, unknown>,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.strategy.set(name, config),
+			this.retryConfig,
+			"setStrategy",
+		);
 	}
 
-	listStrategies(): Array<{
-		name: string;
-		config: Record<string, unknown>;
-		updatedAt: number;
-	}> {
-		return this.strategy.list();
+	async listStrategies(): Promise<
+		Array<{
+			name: string;
+			config: Record<string, unknown>;
+			updatedAt: number;
+		}>
+	> {
+		return withDatabaseRetry(
+			() => this.strategy.list(),
+			this.retryConfig,
+			"listStrategies",
+		);
 	}
 
-	deleteStrategy(name: string): boolean {
-		return this.strategy.delete(name);
+	async deleteStrategy(name: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.strategy.delete(name),
+			this.retryConfig,
+			"deleteStrategy",
+		);
 	}
 
 	// Analytics methods delegated to request repository
-	getRecentRequests(limit = 100): Array<{
-		id: string;
-		timestamp: number;
-		method: string;
-		path: string;
-		account_used: string | null;
-		status_code: number | null;
-		success: boolean;
-		response_time_ms: number | null;
-	}> {
-		return this.requests.getRecentRequests(limit);
+	async getRecentRequests(limit = 100): Promise<
+		Array<{
+			id: string;
+			timestamp: number;
+			method: string;
+			path: string;
+			account_used: string | null;
+			status_code: number | null;
+			success: boolean;
+			response_time_ms: number | null;
+		}>
+	> {
+		return withDatabaseRetry(
+			() => this.requests.getRecentRequests(limit),
+			this.retryConfig,
+			"getRecentRequests",
+		);
 	}
 
-	getRequestStats(since?: number): {
+	async getRequestStats(since?: number): Promise<{
 		totalRequests: number;
 		successfulRequests: number;
 		failedRequests: number;
 		avgResponseTime: number | null;
-	} {
-		return this.requests.getRequestStats(since);
-	}
-
-	aggregateStats(rangeMs?: number) {
-		return this.requests.aggregateStats(rangeMs);
-	}
-
-	getRecentErrors(limit?: number): string[] {
-		return this.requests.getRecentErrors(limit);
-	}
-
-	getTopModels(limit?: number): Array<{ model: string; count: number }> {
-		return this.requests.getTopModels(limit);
-	}
-
-	getRequestsByAccount(since?: number): Array<{
-		accountId: string;
-		accountName: string | null;
-		requestCount: number;
-		successRate: number;
 	}> {
-		return this.requests.getRequestsByAccount(since);
+		return withDatabaseRetry(
+			() => this.requests.getRequestStats(since),
+			this.retryConfig,
+			"getRequestStats",
+		);
+	}
+
+	async aggregateStats(rangeMs?: number) {
+		return withDatabaseRetry(
+			() => this.requests.aggregateStats(rangeMs),
+			this.retryConfig,
+			"aggregateStats",
+		);
+	}
+
+	async getRecentErrors(limit?: number): Promise<string[]> {
+		return withDatabaseRetry(
+			() => this.requests.getRecentErrors(limit),
+			this.retryConfig,
+			"getRecentErrors",
+		);
+	}
+
+	async getTopModels(
+		limit?: number,
+	): Promise<Array<{ model: string; count: number }>> {
+		return withDatabaseRetry(
+			() => this.requests.getTopModels(limit),
+			this.retryConfig,
+			"getTopModels",
+		);
+	}
+
+	async getRequestsByAccount(since?: number): Promise<
+		Array<{
+			accountId: string;
+			accountName: string | null;
+			requestCount: number;
+			successRate: number;
+		}>
+	> {
+		return withDatabaseRetry(
+			() => this.requests.getRequestsByAccount(since),
+			this.retryConfig,
+			"getRequestsByAccount",
+		);
 	}
 
 	// Cleanup operations (payload by age; request metadata by age; plus orphan sweep)
-	cleanupOldRequests(
+	async cleanupOldRequests(
 		payloadRetentionMs: number,
 		requestRetentionMs?: number,
-	): {
+	): Promise<{
 		removedRequests: number;
 		removedPayloads: number;
-	} {
+	}> {
 		const now = Date.now();
 		const payloadCutoff = now - payloadRetentionMs;
-		// Wrap all three DELETEs in one transaction for atomicity: a crash between
-		// statements would otherwise leave orphaned payloads or dangling request rows.
-		return this.adapter.transaction(() => {
+		return this.asyncAdapter.transaction(async () => {
 			let removedRequests = 0;
 			if (
 				typeof requestRetentionMs === "number" &&
 				Number.isFinite(requestRetentionMs)
 			) {
-				const requestCutoff = now - requestRetentionMs;
-				removedRequests = this.requests.deleteOlderThan(requestCutoff);
+				removedRequests = await this.requests.deleteOlderThan(
+					now - requestRetentionMs,
+				);
 			}
 			const removedPayloadsByAge =
-				this.requests.deletePayloadsOlderThan(payloadCutoff);
-			const removedOrphans = this.requests.deleteOrphanedPayloads();
+				await this.requests.deletePayloadsOlderThan(payloadCutoff);
+			const removedOrphans = await this.requests.deleteOrphanedPayloads();
 			return {
 				removedRequests,
 				removedPayloads: removedPayloadsByAge + removedOrphans,
@@ -640,132 +803,149 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	}
 
 	// Agent preference operations delegated to repository
-	getAgentPreference(agentId: string): { model: string } | null {
-		return this.agentPreferences.getPreference(agentId);
+	async getAgentPreference(agentId: string): Promise<{ model: string } | null> {
+		return withDatabaseRetry(
+			() => this.agentPreferences.getPreference(agentId),
+			this.retryConfig,
+			"getAgentPreference",
+		);
 	}
 
-	getAllAgentPreferences(): Array<{ agent_id: string; model: string }> {
-		return this.agentPreferences.getAllPreferences();
+	async getAllAgentPreferences(): Promise<
+		Array<{ agent_id: string; model: string }>
+	> {
+		return withDatabaseRetry(
+			() => this.agentPreferences.getAllPreferences(),
+			this.retryConfig,
+			"getAllAgentPreferences",
+		);
 	}
 
-	setAgentPreference(agentId: string, model: string): void {
-		this.agentPreferences.setPreference(agentId, model);
+	async setAgentPreference(agentId: string, model: string): Promise<void> {
+		return withDatabaseRetry(
+			() => this.agentPreferences.setPreference(agentId, model),
+			this.retryConfig,
+			"setAgentPreference",
+		);
 	}
 
-	deleteAgentPreference(agentId: string): boolean {
-		return this.agentPreferences.deletePreference(agentId);
+	async deleteAgentPreference(agentId: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.agentPreferences.deletePreference(agentId),
+			this.retryConfig,
+			"deleteAgentPreference",
+		);
 	}
 
-	setBulkAgentPreferences(agentIds: string[], model: string): void {
-		this.agentPreferences.setBulkPreferences(agentIds, model);
+	async setBulkAgentPreferences(
+		agentIds: string[],
+		model: string,
+	): Promise<void> {
+		return withDatabaseRetry(
+			() => this.agentPreferences.setBulkPreferences(agentIds, model),
+			this.retryConfig,
+			"setBulkAgentPreferences",
+		);
 	}
 
-	close(): void {
-		// Ensure all write operations are flushed before closing
-		this.adapter.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-		this.adapter.close();
+	async close(): Promise<void> {
+		if (this.syncAdapter) {
+			this.syncAdapter.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		}
+		await this.asyncAdapter.close();
 	}
 
-	dispose(): void {
-		this.close();
+	async dispose(): Promise<void> {
+		await this.close();
 	}
 
 	// Optimize database periodically to maintain performance
 	optimize(): void {
-		this.adapter.exec("PRAGMA optimize");
-		this.adapter.exec("PRAGMA wal_checkpoint(PASSIVE)");
+		if (!this.syncAdapter) return;
+		this.syncAdapter.exec("PRAGMA optimize");
+		this.syncAdapter.exec("PRAGMA wal_checkpoint(PASSIVE)");
 	}
 
 	/** Compact and reclaim disk space (blocks DB during operation) */
 	compact(): void {
+		if (!this.syncAdapter) return;
 		// Ensure WAL is checkpointed and truncated, then VACUUM to rebuild file
-		this.adapter.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-		this.adapter.exec("VACUUM");
+		this.syncAdapter.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		this.syncAdapter.exec("VACUUM");
 	}
 
 	/** Incremental vacuum - reclaims space without blocking (non-blocking alternative to VACUUM) */
 	incrementalVacuum(pages?: number): void {
+		if (!this.syncAdapter) return;
 		// Set auto_vacuum to incremental if not already set
-		const autoVacuumMode = this.adapter.get<{
+		const autoVacuumMode = this.syncAdapter.get<{
 			auto_vacuum: number;
 		}>("PRAGMA auto_vacuum");
 
 		if (autoVacuumMode && autoVacuumMode.auto_vacuum !== 2) {
 			// Enable incremental vacuum mode (requires VACUUM to take effect)
-			this.adapter.exec("PRAGMA auto_vacuum = INCREMENTAL");
-			this.adapter.exec("VACUUM"); // One-time full vacuum to enable incremental mode
+			this.syncAdapter.exec("PRAGMA auto_vacuum = INCREMENTAL");
+			this.syncAdapter.exec("VACUUM"); // One-time full vacuum to enable incremental mode
 		}
 
 		// Run incremental vacuum (reclaims up to N pages, or all free pages if not specified)
 		if (pages) {
-			this.adapter.exec(`PRAGMA incremental_vacuum(${pages})`);
+			this.syncAdapter.exec(`PRAGMA incremental_vacuum(${pages})`);
 		} else {
-			this.adapter.exec("PRAGMA incremental_vacuum");
+			this.syncAdapter.exec("PRAGMA incremental_vacuum");
 		}
 	}
 
 	// API Key operations delegated to repository
-	getApiKeys() {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.findAll();
-			},
+	async getApiKeys() {
+		return withDatabaseRetry(
+			() => this.apiKeys.findAll(),
 			this.retryConfig,
 			"getApiKeys",
 		);
 	}
 
-	getActiveApiKeys() {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.findActive();
-			},
+	async getActiveApiKeys() {
+		return withDatabaseRetry(
+			() => this.apiKeys.findActive(),
 			this.retryConfig,
 			"getActiveApiKeys",
 		);
 	}
 
-	getApiKey(id: string) {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.findById(id);
-			},
+	async getApiKey(id: string) {
+		return withDatabaseRetry(
+			() => this.apiKeys.findById(id),
 			this.retryConfig,
 			"getApiKey",
 		);
 	}
 
-	getApiKeyByHashedKey(hashedKey: string) {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.findByHashedKey(hashedKey);
-			},
+	async getApiKeyByHashedKey(hashedKey: string) {
+		return withDatabaseRetry(
+			() => this.apiKeys.findByHashedKey(hashedKey),
 			this.retryConfig,
 			"getApiKeyByHashedKey",
 		);
 	}
 
-	getApiKeyByName(name: string) {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.findByName(name);
-			},
+	async getApiKeyByName(name: string) {
+		return withDatabaseRetry(
+			() => this.apiKeys.findByName(name),
 			this.retryConfig,
 			"getApiKeyByName",
 		);
 	}
 
-	apiKeyNameExists(name: string): boolean {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.nameExists(name);
-			},
+	async apiKeyNameExists(name: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.nameExists(name),
 			this.retryConfig,
 			"apiKeyNameExists",
 		);
 	}
 
-	createApiKey(apiKey: {
+	async createApiKey(apiKey: {
 		id: string;
 		name: string;
 		hashedKey: string;
@@ -774,9 +954,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		lastUsed?: number | null;
 		isActive: boolean;
 		role?: "admin" | "api-only";
-	}): void {
-		withDatabaseRetrySync(
-			() => {
+	}): Promise<void> {
+		return withDatabaseRetry(
+			() =>
 				this.apiKeys.create({
 					id: apiKey.id,
 					name: apiKey.name,
@@ -786,78 +966,66 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					last_used: apiKey.lastUsed || null,
 					is_active: apiKey.isActive ? 1 : 0,
 					role: apiKey.role || "api-only",
-				});
-			},
+				}),
 			this.retryConfig,
 			"createApiKey",
 		);
 	}
 
-	updateApiKeyUsage(id: string, timestamp: number): void {
-		withDatabaseRetrySync(
-			() => {
-				this.apiKeys.updateUsage(id, timestamp);
-			},
+	async updateApiKeyUsage(id: string, timestamp: number): Promise<void> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateUsage(id, timestamp),
 			this.retryConfig,
 			"updateApiKeyUsage",
 		);
 	}
 
-	disableApiKey(id: string): boolean {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.disable(id);
-			},
+	async disableApiKey(id: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.disable(id),
 			this.retryConfig,
 			"disableApiKey",
 		);
 	}
 
-	enableApiKey(id: string): boolean {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.enable(id);
-			},
+	async enableApiKey(id: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.enable(id),
 			this.retryConfig,
 			"enableApiKey",
 		);
 	}
 
-	deleteApiKey(id: string): boolean {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.delete(id);
-			},
+	async deleteApiKey(id: string): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.delete(id),
 			this.retryConfig,
 			"deleteApiKey",
 		);
 	}
 
-	updateApiKeyRole(id: string, role: "admin" | "api-only"): boolean {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.updateRole(id, role);
-			},
+	async updateApiKeyRole(
+		id: string,
+		role: "admin" | "api-only",
+	): Promise<boolean> {
+		return withDatabaseRetry(
+			() => this.apiKeys.updateRole(id, role),
 			this.retryConfig,
 			"updateApiKeyRole",
 		);
 	}
 
-	countActiveApiKeys(): number {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.countActive();
-			},
+	async countActiveApiKeys(): Promise<number> {
+		return withDatabaseRetry(
+			() => this.apiKeys.countActive(),
 			this.retryConfig,
 			"countActiveApiKeys",
 		);
 	}
 
-	countAllApiKeys(): number {
-		return withDatabaseRetrySync(
-			() => {
-				return this.apiKeys.countAll();
-			},
+	async countAllApiKeys(): Promise<number> {
+		return withDatabaseRetry(
+			() => this.apiKeys.countAll(),
 			this.retryConfig,
 			"countAllApiKeys",
 		);
@@ -866,11 +1034,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	/**
 	 * Clear all API keys (for testing purposes)
 	 */
-	clearApiKeys(): void {
-		withDatabaseRetrySync(
-			() => {
-				this.apiKeys.clearAll();
-			},
+	async clearApiKeys(): Promise<void> {
+		return withDatabaseRetry(
+			() => this.apiKeys.clearAll(),
 			this.retryConfig,
 			"clearApiKeys",
 		);

@@ -13,30 +13,36 @@ export interface StrategyStore {
 	 * Reset session for an account
 	 * Updates session_start and session_request_count
 	 */
-	resetAccountSession(accountId: string, timestamp: number): void;
+	resetAccountSession(
+		accountId: string,
+		timestamp: number,
+	): void | Promise<void>;
 
 	/**
 	 * Get all accounts (optional method for strategies that need full account list)
 	 */
-	getAllAccounts?(): Account[];
+	getAllAccounts?(): Account[] | Promise<Account[]>;
 
 	/**
 	 * Update account request count
 	 */
-	updateAccountRequestCount?(accountId: string, count: number): void;
+	updateAccountRequestCount?(
+		accountId: string,
+		count: number,
+	): void | Promise<void>;
 
 	/**
 	 * Get account by ID
 	 */
-	getAccount?(accountId: string): Account | null;
+	getAccount?(accountId: string): Account | null | Promise<Account | null>;
 
 	/**
 	 * Pause an account
 	 */
-	pauseAccount?(accountId: string): void;
+	pauseAccount?(accountId: string): void | Promise<void>;
 
 	/**
 	 * Resume a paused account
 	 */
-	resumeAccount?(accountId: string): void;
+	resumeAccount?(accountId: string): void | Promise<void>;
 }

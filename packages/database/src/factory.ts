@@ -14,6 +14,7 @@ import { resolveDbPath } from "./paths";
 import { SqliteAdapter } from "./sqlite-adapter";
 
 let instance: DatabaseOperations | null = null;
+let instancePromise: Promise<DatabaseOperations> | null = null;
 let dbPath: string | undefined;
 let runtimeConfig: RuntimeConfig | undefined;
 let migrationChecked = false;
@@ -31,67 +32,78 @@ export function initialize(
 	fastModeEnabled = fastMode;
 }
 
-export function getInstance(fastMode?: boolean): DatabaseOperations {
+export async function getInstance(
+	fastMode?: boolean,
+): Promise<DatabaseOperations> {
 	// Use provided fastMode or the stored value from initialize()
 	const useFastMode = fastMode ?? fastModeEnabled;
 	if (!instance) {
-		// Perform one-time migration check from legacy ccflare
-		if (!migrationChecked) {
-			migrateFromCcflare();
-			migrationChecked = true;
-		}
-		// Extract database configuration from runtime config
-		const dbConfig: DatabaseConfig | undefined = runtimeConfig?.database
-			? {
-					...(runtimeConfig.database.walMode !== undefined && {
-						walMode: runtimeConfig.database.walMode,
-					}),
-					...(runtimeConfig.database.busyTimeoutMs !== undefined && {
-						busyTimeoutMs: runtimeConfig.database.busyTimeoutMs,
-					}),
-					...(runtimeConfig.database.cacheSize !== undefined && {
-						cacheSize: runtimeConfig.database.cacheSize,
-					}),
-					...(runtimeConfig.database.synchronous !== undefined && {
-						synchronous: runtimeConfig.database.synchronous,
-					}),
-					...(runtimeConfig.database.mmapSize !== undefined && {
-						mmapSize: runtimeConfig.database.mmapSize,
-					}),
-					...(runtimeConfig.database.pageSize !== undefined && {
-						pageSize: runtimeConfig.database.pageSize,
-					}),
+		if (!instancePromise) {
+			instancePromise = (async () => {
+				// Perform one-time migration check from legacy ccflare
+				if (!migrationChecked) {
+					migrateFromCcflare();
+					migrationChecked = true;
 				}
-			: undefined;
+				// Extract database configuration from runtime config
+				const dbConfig: DatabaseConfig | undefined = runtimeConfig?.database
+					? {
+							...(runtimeConfig.database.walMode !== undefined && {
+								walMode: runtimeConfig.database.walMode,
+							}),
+							...(runtimeConfig.database.busyTimeoutMs !== undefined && {
+								busyTimeoutMs: runtimeConfig.database.busyTimeoutMs,
+							}),
+							...(runtimeConfig.database.cacheSize !== undefined && {
+								cacheSize: runtimeConfig.database.cacheSize,
+							}),
+							...(runtimeConfig.database.synchronous !== undefined && {
+								synchronous: runtimeConfig.database.synchronous,
+							}),
+							...(runtimeConfig.database.mmapSize !== undefined && {
+								mmapSize: runtimeConfig.database.mmapSize,
+							}),
+							...(runtimeConfig.database.pageSize !== undefined && {
+								pageSize: runtimeConfig.database.pageSize,
+							}),
+						}
+					: undefined;
 
-		const retryConfig: DatabaseRetryConfig | undefined =
-			runtimeConfig?.database?.retry;
+				const retryConfig: DatabaseRetryConfig | undefined =
+					runtimeConfig?.database?.retry;
 
-		instance = new DatabaseOperations(
-			dbPath,
-			dbConfig,
-			retryConfig,
-			useFastMode,
-		);
-		if (runtimeConfig) {
-			instance.setRuntimeConfig(runtimeConfig);
+				const ops = await DatabaseOperations.create(
+					dbPath,
+					dbConfig,
+					retryConfig,
+					useFastMode,
+				);
+				if (runtimeConfig) {
+					ops.setRuntimeConfig(runtimeConfig);
+				}
+				// Register with lifecycle manager
+				registerDisposable(ops);
+				instance = ops;
+				instancePromise = null;
+				return ops;
+			})();
 		}
-		// Register with lifecycle manager
-		registerDisposable(instance);
+		return instancePromise;
 	}
 	return instance;
 }
 
-export function closeAll(): void {
+export async function closeAll(): Promise<void> {
 	if (instance) {
 		unregisterDisposable(instance);
-		instance.close();
+		await instance.close();
 		instance = null;
+		instancePromise = null;
 	}
 }
 
-export function reset(): void {
-	closeAll();
+export async function reset(): Promise<void> {
+	await closeAll();
 }
 
 export function getBackendType(): DatabaseDialect {

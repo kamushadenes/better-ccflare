@@ -3,7 +3,7 @@
  */
 
 import { NO_ACCOUNT_ID } from "@better-ccflare/types";
-import type { DatabaseAdapter } from "../adapter";
+import type { AsyncDatabaseAdapter } from "../adapter";
 
 export interface AccountStats {
 	name: string;
@@ -26,16 +26,16 @@ export interface AggregatedStats {
 }
 
 export class StatsRepository {
-	constructor(private db: DatabaseAdapter) {}
+	constructor(private db: AsyncDatabaseAdapter) {}
 
 	/**
 	 * Get aggregated statistics for requests within a time window.
 	 * @param sinceMs - Only include requests after this timestamp (ms since epoch).
 	 *   Defaults to 30 days ago to avoid full-table scans on large deployments.
 	 */
-	getAggregatedStats(sinceMs?: number): AggregatedStats {
+	async getAggregatedStats(sinceMs?: number): Promise<AggregatedStats> {
 		const since = sinceMs ?? Date.now() - 30 * 24 * 60 * 60 * 1000;
-		const stats = this.db.get<AggregatedStats>(
+		const stats = (await this.db.get<AggregatedStats>(
 			`SELECT
 				COUNT(*) as totalRequests,
 				SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successfulRequests,
@@ -49,7 +49,7 @@ export class StatsRepository {
 			FROM requests
 			WHERE timestamp > ?`,
 			[since],
-		) as AggregatedStats;
+		)) as AggregatedStats;
 
 		// Calculate total tokens
 		const totalTokens =
@@ -70,7 +70,10 @@ export class StatsRepository {
 	 * Get account statistics with success rates
 	 * This consolidates the duplicated logic between cli-commands and http-api
 	 */
-	getAccountStats(limit = 10, includeUnauthenticated = true): AccountStats[] {
+	async getAccountStats(
+		limit = 10,
+		includeUnauthenticated = true,
+	): Promise<AccountStats[]> {
 		// Get account request counts
 		const accountStatsQuery = includeUnauthenticated
 			? `
@@ -102,7 +105,10 @@ export class StatsRepository {
 			? [NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, NO_ACCOUNT_ID, limit]
 			: [limit];
 
-		const accountStats = this.db.query(accountStatsQuery, params) as Array<{
+		const accountStats = (await this.db.query(
+			accountStatsQuery,
+			params,
+		)) as Array<{
 			id: string;
 			name: string;
 			requestCount: number;
@@ -115,7 +121,7 @@ export class StatsRepository {
 		const accountIds = accountStats.map((a) => a.id);
 		const placeholders = accountIds.map(() => "?").join(",");
 
-		const successRates = this.db.query(
+		const successRates = (await this.db.query(
 			`SELECT 
 				account_used as accountId,
 				COUNT(*) as total,
@@ -124,7 +130,7 @@ export class StatsRepository {
 			WHERE account_used IN (${placeholders})
 			GROUP BY account_used`,
 			accountIds,
-		) as Array<{
+		)) as Array<{
 			accountId: string;
 			total: number;
 			successful: number;
@@ -150,8 +156,8 @@ export class StatsRepository {
 	/**
 	 * Get count of active accounts
 	 */
-	getActiveAccountCount(): number {
-		const result = this.db.get<{ count: number }>(
+	async getActiveAccountCount(): Promise<number> {
+		const result = await this.db.get<{ count: number }>(
 			"SELECT COUNT(*) as count FROM accounts WHERE request_count > 0",
 		);
 		return result?.count ?? 0;
@@ -160,8 +166,8 @@ export class StatsRepository {
 	/**
 	 * Get recent errors (already exists in request.repository, but adding for completeness)
 	 */
-	getRecentErrors(limit = 10): string[] {
-		const errors = this.db.query(
+	async getRecentErrors(limit = 10): Promise<string[]> {
+		const errors = (await this.db.query(
 			`SELECT DISTINCT error_message
 			FROM requests
 			WHERE error_message IS NOT NULL
@@ -169,7 +175,7 @@ export class StatsRepository {
 			ORDER BY timestamp DESC
 			LIMIT ?`,
 			[limit],
-		) as Array<{ error_message: string }>;
+		)) as Array<{ error_message: string }>;
 
 		return errors.map((e) => e.error_message);
 	}
@@ -177,10 +183,10 @@ export class StatsRepository {
 	/**
 	 * Get top models by usage
 	 */
-	getTopModels(
+	async getTopModels(
 		limit = 5,
-	): Array<{ model: string; count: number; percentage: number }> {
-		const models = this.db.query(
+	): Promise<Array<{ model: string; count: number; percentage: number }>> {
+		const models = (await this.db.query(
 			`WITH model_counts AS (
 				SELECT
 					model,
@@ -200,7 +206,7 @@ export class StatsRepository {
 			ORDER BY mc.count DESC
 			LIMIT ?`,
 			[limit],
-		) as Array<{
+		)) as Array<{
 			model: string;
 			count: number;
 			percentage: number;
@@ -212,14 +218,16 @@ export class StatsRepository {
 	/**
 	 * Get API key statistics with success rates
 	 */
-	getApiKeyStats(): Array<{
-		id: string;
-		name: string;
-		requests: number;
-		successRate: number;
-	}> {
+	async getApiKeyStats(): Promise<
+		Array<{
+			id: string;
+			name: string;
+			requests: number;
+			successRate: number;
+		}>
+	> {
 		// Get API key request counts
-		const apiKeyStats = this.db.query(
+		const apiKeyStats = (await this.db.query(
 			`SELECT
 				api_key_id as id,
 				api_key_name as name,
@@ -229,7 +237,7 @@ export class StatsRepository {
 			GROUP BY api_key_id, api_key_name
 			HAVING requests > 0
 			ORDER BY requests DESC`,
-		) as Array<{
+		)) as Array<{
 			id: string;
 			name: string;
 			requests: number;
@@ -253,7 +261,7 @@ export class StatsRepository {
 
 		const placeholders = apiKeyIds.map(() => "?").join(",");
 
-		const successRates = this.db.query(
+		const successRates = (await this.db.query(
 			`SELECT
 				api_key_id as apiKeyId,
 				COUNT(*) as total,
@@ -262,7 +270,7 @@ export class StatsRepository {
 			WHERE api_key_id IN (${placeholders})
 			GROUP BY api_key_id`,
 			apiKeyIds,
-		) as Array<{
+		)) as Array<{
 			apiKeyId: string;
 			total: number;
 			successful: number;

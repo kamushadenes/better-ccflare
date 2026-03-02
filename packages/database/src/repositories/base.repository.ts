@@ -1,21 +1,31 @@
-import type { DatabaseAdapter, QueryParams } from "../adapter";
+import type { AsyncDatabaseAdapter, QueryParams } from "../adapter";
 
 export abstract class BaseRepository<_T> {
-	constructor(protected db: DatabaseAdapter) {}
+	constructor(protected db: AsyncDatabaseAdapter) {}
 
-	protected query<R>(sql: string, params: QueryParams = []): R[] {
+	protected async query<R>(
+		sql: string,
+		params: QueryParams = [],
+	): Promise<R[]> {
 		return this.db.query<R>(sql, params);
 	}
 
-	protected get<R>(sql: string, params: QueryParams = []): R | null {
+	protected async get<R>(
+		sql: string,
+		params: QueryParams = [],
+	): Promise<R | null> {
 		return this.db.get<R>(sql, params);
 	}
 
-	protected run(sql: string, params: QueryParams = []): void {
-		this.db.run(sql, params);
+	protected async run(sql: string, params: QueryParams = []): Promise<void> {
+		await this.db.run(sql, params);
 	}
 
-	protected runWithChanges(sql: string, params: QueryParams = []): number {
-		return this.db.run(sql, params).changes;
+	protected async runWithChanges(
+		sql: string,
+		params: QueryParams = [],
+	): Promise<number> {
+		const result = await this.db.run(sql, params);
+		return result.changes;
 	}
 }

@@ -54,6 +54,11 @@ Plans:
 
 **Requirements:** R4
 **Verification:** Fresh PostgreSQL database initializes with correct schema.
+**Plans:** 2 plans
+
+Plans:
+- [x] 03-01-PLAN.md -- Async migration functions with PostgreSQL-compatible DDL
+- [x] 03-02-PLAN.md -- PostgreSQL migration integration tests
 
 ---
 
@@ -69,6 +74,12 @@ Plans:
 
 **Requirements:** R5, R6
 **Verification:** Full application starts and serves requests on both backends.
+**Plans:** 3 plans
+
+Plans:
+- [x] 04-01-PLAN.md -- AsyncSqliteAdapter bridge, dialect property, factory backend detection
+- [ ] 04-02-PLAN.md -- Repository async conversion, dialect-aware SQL, DatabaseOperations async, factory async
+- [ ] 04-03-PLAN.md -- Caller async migration (~24 files), startup backend logging, test updates
 
 ---
 

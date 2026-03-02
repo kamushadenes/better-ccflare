@@ -1,4 +1,5 @@
 import { Logger } from "@better-ccflare/logger";
+import { buildInsertIgnoreSql } from "../sql-utils";
 import { BaseRepository } from "./base.repository";
 
 const log = new Logger("ModelTranslationRepository");
@@ -28,8 +29,8 @@ export class ModelTranslationRepository extends BaseRepository<ModelTranslation>
 	 * @param clientName - The client-facing model name (e.g., "claude-3-5-sonnet")
 	 * @returns Bedrock model ID if found, null otherwise
 	 */
-	getBedrockModelId(clientName: string): string | null {
-		const result = this.get<{ bedrock_model_id: string }>(
+	async getBedrockModelId(clientName: string): Promise<string | null> {
+		const result = await this.get<{ bedrock_model_id: string }>(
 			`SELECT bedrock_model_id FROM model_translations WHERE client_name = ?`,
 			[clientName],
 		);
@@ -51,28 +52,43 @@ export class ModelTranslationRepository extends BaseRepository<ModelTranslation>
 	 * @param bedrockModelId - The Bedrock model ID
 	 * @param autoDiscovered - Whether this mapping was learned from passthrough (default: false)
 	 */
-	addTranslation(
+	async addTranslation(
 		clientName: string,
 		bedrockModelId: string,
 		autoDiscovered: boolean = false,
-	): void {
+	): Promise<void> {
 		const now = Date.now();
 		const id = `model-trans-${now}-${Math.random().toString(36).substring(2, 9)}`;
+		const values = [
+			id,
+			clientName,
+			bedrockModelId,
+			autoDiscovered ? 0 : 1,
+			autoDiscovered ? 1 : 0,
+			now,
+			now,
+		];
 
 		try {
-			this.run(
-				`INSERT OR IGNORE INTO model_translations (id, client_name, bedrock_model_id, is_default, auto_discovered, created_at, updated_at)
+			if (this.db.dialect === "postgres") {
+				const columns = [
+					"id",
+					"client_name",
+					"bedrock_model_id",
+					"is_default",
+					"auto_discovered",
+					"created_at",
+					"updated_at",
+				];
+				const sql = buildInsertIgnoreSql("model_translations", columns);
+				await this.db.run(sql, values);
+			} else {
+				await this.run(
+					`INSERT OR IGNORE INTO model_translations (id, client_name, bedrock_model_id, is_default, auto_discovered, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				[
-					id,
-					clientName,
-					bedrockModelId,
-					autoDiscovered ? 0 : 1,
-					autoDiscovered ? 1 : 0,
-					now,
-					now,
-				],
-			);
+					values,
+				);
+			}
 			log.info(
 				`Added model translation: ${clientName} → ${bedrockModelId}${autoDiscovered ? " (auto-discovered)" : ""}`,
 			);
@@ -85,8 +101,8 @@ export class ModelTranslationRepository extends BaseRepository<ModelTranslation>
 	 * List all model translation mappings
 	 * @returns Array of all translations ordered by client name
 	 */
-	listTranslations(): ModelTranslation[] {
-		const rows = this.query<{
+	async listTranslations(): Promise<ModelTranslation[]> {
+		const rows = await this.query<{
 			client_name: string;
 			bedrock_model_id: string;
 			is_default: number;
@@ -112,8 +128,11 @@ export class ModelTranslationRepository extends BaseRepository<ModelTranslation>
 	 * @param maxResults - Maximum number of results to return (default: 5)
 	 * @returns Array of similar model names with similarity scores
 	 */
-	findSimilar(clientName: string, maxResults: number = 5): SimilarModel[] {
-		const allTranslations = this.query<{ client_name: string }>(
+	async findSimilar(
+		clientName: string,
+		maxResults: number = 5,
+	): Promise<SimilarModel[]> {
+		const allTranslations = await this.query<{ client_name: string }>(
 			`SELECT client_name FROM model_translations ORDER BY client_name`,
 		);
 
