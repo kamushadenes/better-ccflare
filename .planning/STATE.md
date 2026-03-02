@@ -7,7 +7,7 @@ Phase 4 — Backend Selection & Repository Updates. Planning complete.
 Phase 1: Plan 2/2 complete
 Phase 2: Plan 2/2 complete
 Phase 3: Plan 2/2 complete
-Phase 4: Plan 1/3 complete
+Phase 4: Plan 3/3 complete
 
 ## Completed
 - [x] Forked tombii/better-ccflare to kamushadenes/better-ccflare
@@ -21,6 +21,8 @@ Phase 4: Plan 1/3 complete
 - [x] Phase 3 Plan 01: Async migration functions (getTableColumnsAsync, ensureSchemaAsync, runMigrationsAsync, addPerformanceIndexesAsync) + 3 unit tests
 - [x] Phase 3 Plan 02: PostgreSQL migration integration tests (8 tests, gated by TEST_DATABASE_URL)
 - [x] Phase 4 Plan 01: AsyncSqliteAdapter bridge + DatabaseDialect type + factory backend detection (15 TDD tests)
+- [x] Phase 4 Plan 02: Async database layer with dialect-aware SQL (10 TDD tests, 72 total pass)
+- [x] Phase 4 Plan 03: Caller async migration (~37 files), startup backend logging, test updates
 
 ## Decisions Log
 | Date | Decision | Rationale |
@@ -41,6 +43,13 @@ Phase 4: Plan 1/3 complete
 | 2026-03-01 | AsyncSqliteAdapter uses BEGIN/COMMIT/ROLLBACK | Explicit transaction control rather than wrapping sync transaction method |
 | 2026-03-01 | Nested transaction guard via inTransaction flag | Prevents SQLite re-entrant transaction errors |
 | 2026-03-01 | Dynamic import for PostgresAdapter in factory | Avoids loading postgres.js when using SQLite backend |
+| 2026-03-02 | StrategyStore union return types (T or Promise T) | Backward compat with sync callers during transition |
+| 2026-03-02 | DatabaseOperations.create() async static factory | Constructor cannot be async; factory pattern standard |
+| 2026-03-02 | withDatabaseRetry replaces withDatabaseRetrySync | All repository methods now async |
+| 2026-03-02 | Factory instancePromise dedup pattern | Prevents double initialization on concurrent calls |
+| 2026-03-02 | Promise union types for strategy interfaces | Backward compat: T or Promise T allows sync and async |
+| 2026-03-02 | translateBedrockError made async | Supports async getInstance and findSimilar |
+| 2026-03-02 | getAccounts callback widened to accept Promise | TokenHealthService works with async dbOps.getAllAccounts |
 
 ## Performance Metrics
 | Phase | Plan | Duration | Tasks | Files |
@@ -52,9 +61,11 @@ Phase 4: Plan 1/3 complete
 | 03 | 01 | 457s | 4 | 4 |
 | 03 | 02 | 190s | 1 | 1 |
 | 04 | 01 | 648s | 2 | 8 |
+| 04 | 02 | 798s | 9 | 13 |
+| 04 | 03 | 1307s | 4 | 37 |
 
 ## Last Session
-- **Stopped at:** Completed 04-01-PLAN.md
+- **Stopped at:** Completed 04-03-PLAN.md
 
 ## Blockers
 None.

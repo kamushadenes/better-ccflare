@@ -78,8 +78,8 @@ Plans:
 
 Plans:
 - [x] 04-01-PLAN.md -- AsyncSqliteAdapter bridge, dialect property, factory backend detection
-- [ ] 04-02-PLAN.md -- Repository async conversion, dialect-aware SQL, DatabaseOperations async, factory async
-- [ ] 04-03-PLAN.md -- Caller async migration (~24 files), startup backend logging, test updates
+- [x] 04-02-PLAN.md -- Repository async conversion, dialect-aware SQL, DatabaseOperations async, factory async
+- [x] 04-03-PLAN.md -- Caller async migration (~37 files), startup backend logging, test updates
 
 ---
 

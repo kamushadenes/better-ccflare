@@ -23,20 +23,20 @@
   - Timestamp handling compatible with existing `Date.now()` pattern
 
 ### R4: Schema Migrations for PostgreSQL
-- [ ] Port all existing migrations to PostgreSQL-compatible DDL
-- [ ] Use `information_schema.columns` instead of `PRAGMA table_info`
-- [ ] Use native `ALTER TABLE DROP COLUMN` instead of table recreation
-- [ ] Track migration state in a `_migrations` table (same approach, both backends)
+- [x] Port all existing migrations to PostgreSQL-compatible DDL
+- [x] Use `information_schema.columns` instead of `PRAGMA table_info`
+- [x] Use native `ALTER TABLE DROP COLUMN` instead of table recreation
+- [x] Track migration state in a `_migrations` table (same approach, both backends)
 
 ### R5: Backend Selection
-- [ ] Auto-detect backend: if `DATABASE_URL` env var is set → PostgreSQL; otherwise → SQLite
-- [ ] Inject chosen adapter via existing DI container (`packages/core-di`)
-- [ ] Log which backend is active at startup
+- [x] Auto-detect backend: if `DATABASE_URL` env var is set → PostgreSQL; otherwise → SQLite
+- [x] Inject chosen adapter via existing DI container (`packages/core-di`)
+- [x] Log which backend is active at startup
 
 ### R6: Repository Compatibility
-- [ ] Update all repository upsert queries to use adapter-aware SQL generation
-- [ ] All 8 repositories must work identically on both backends
-- [ ] No behavioral differences observable from the application layer
+- [x] Update all repository upsert queries to use adapter-aware SQL generation
+- [x] All 8 repositories must work identically on both backends
+- [x] No behavioral differences observable from the application layer
 
 ### R7: SQLite-to-PostgreSQL Migration Tool
 - [ ] CLI command: `bun run cli --migrate-to-postgres`
