@@ -206,26 +206,17 @@ export class OAuthFlow {
 
 	/**
 	 * Creates an account with OAuth tokens (claude-oauth mode).
-	 *
-	 * Stores refresh token, access token, and expiration for automatic token refresh.
-	 *
-	 * @param id - Unique account ID
-	 * @param name - Account name
-	 * @param tokens - OAuth tokens from token exchange
-	 * @param priority - Account priority
-	 * @param customEndpoint - Custom API endpoint (optional)
-	 * @returns Created account information
 	 */
-	private createAccountWithOAuth(
+	private async createAccountWithOAuth(
 		id: string,
 		name: string,
 		tokens: OAuthTokens,
 		priority: number,
 		customEndpoint?: string,
-	): AccountCreated {
-		const db = this.dbOps.getDatabase();
+	): Promise<AccountCreated> {
+		const adapter = this.dbOps.getAsyncAdapter();
 
-		db.run(
+		await adapter.run(
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
@@ -255,28 +246,17 @@ export class OAuthFlow {
 
 	/**
 	 * Creates an account with API key (console mode).
-	 *
-	 * Stores only the API key, no OAuth tokens. These accounts don't require
-	 * token refresh but cannot be refreshed if the API key is revoked.
-	 *
-	 * @param id - Unique account ID
-	 * @param name - Account name
-	 * @param apiKey - API key from Anthropic console
-	 * @param tier - Account tier (1, 5, or 20)
-	 * @param priority - Account priority
-	 * @param customEndpoint - Custom API endpoint (optional)
-	 * @returns Created account information
 	 */
-	private createAccountWithApiKey(
+	private async createAccountWithApiKey(
 		id: string,
 		name: string,
 		apiKey: string,
 		priority: number,
 		customEndpoint?: string,
-	): AccountCreated {
-		const db = this.dbOps.getDatabase();
+	): Promise<AccountCreated> {
+		const adapter = this.dbOps.getAsyncAdapter();
 
-		db.run(
+		await adapter.run(
 			`
 			INSERT INTO accounts (
 				id, name, provider, api_key, refresh_token, access_token, expires_at,
