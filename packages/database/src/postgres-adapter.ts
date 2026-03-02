@@ -35,6 +35,14 @@ export class PostgresAdapter implements AsyncDatabaseAdapter {
 					parse: (x: string) => Number(x),
 					serialize: (x: number) => x.toString(),
 				},
+				// Parse NUMERIC (OID 1700) as JavaScript number instead of string.
+				// Produced by AVG(), SUM() with decimals, and arithmetic expressions.
+				numeric: {
+					to: 1700,
+					from: [1700],
+					parse: (x: string) => Number(x),
+					serialize: (x: number) => x.toString(),
+				},
 			},
 		});
 	}
