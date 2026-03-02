@@ -1,3 +1,7 @@
+# Default (SQLite): docker compose up
+# With PostgreSQL: docker compose --profile postgres up
+#   Then uncomment DATABASE_URL in better-ccflare service environment
+
 services:
   better-ccflare:
     image: ghcr.io/tombii/better-ccflare:latest
@@ -15,6 +19,8 @@ services:
       - BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
       # Optional: configure logging
       # - LOG_LEVEL=info
+      # PostgreSQL mode (uncomment when using --profile postgres):
+      # - DATABASE_URL=postgresql://ccflare:${POSTGRES_PASSWORD:-ccflare}@postgres:5432/better_ccflare
     # Load environment variables from .env file (optional)
     # Create a .env file in the same directory as docker-compose.yml
     env_file:
@@ -35,6 +41,26 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    container_name: better-ccflare-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: better_ccflare
+      POSTGRES_USER: ccflare
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ccflare}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccflare -d better_ccflare"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   better-ccflare-data:
+    driver: local
+  postgres-data:
     driver: local

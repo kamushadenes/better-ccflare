@@ -60,6 +60,9 @@ RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
 ENV NODE_ENV=production
 ENV BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
 ENV BETTER_CCFLARE_LOG_DIR=/app/logs
+# PostgreSQL mode: set DATABASE_URL to use PostgreSQL instead of SQLite
+# Example: DATABASE_URL=postgresql://user:password@host:5432/dbname
+# When DATABASE_URL is set, BETTER_CCFLARE_DB_PATH is ignored
 
 # Create logs directory with proper permissions
 RUN mkdir -p /app/logs /data && chown -R ccflare:ccflare /app/logs /data
