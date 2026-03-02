@@ -81,7 +81,7 @@ export class StatsRepository {
 					COALESCE(a.id, ?) as id,
 					COALESCE(a.name, ?) as name,
 					COUNT(r.id) as requestCount,
-					COALESCE(a.total_requests, 0) as totalRequests
+					MAX(COALESCE(a.total_requests, 0)) as totalRequests
 				FROM requests r
 				LEFT JOIN accounts a ON a.id = r.account_used
 				GROUP BY COALESCE(a.id, ?), COALESCE(a.name, ?)
