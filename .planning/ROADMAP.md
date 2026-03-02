@@ -95,6 +95,11 @@ Plans:
 
 **Requirements:** R7, R8
 **Verification:** Migrate a populated SQLite DB to PostgreSQL, verify data integrity.
+**Plans:** 2 plans
+
+Plans:
+- [x] 05-01-PLAN.md -- SQLite-to-PostgreSQL migration tool (TDD): migrateToPostgres function, CLI wiring, tests
+- [x] 05-02-PLAN.md -- Docker support: optional PostgreSQL service via Compose profile, Dockerfile DATABASE_URL docs
 
 ---
 

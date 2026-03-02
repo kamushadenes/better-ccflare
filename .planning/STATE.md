@@ -1,13 +1,14 @@
 # Project State
 
 ## Current Phase
-Phase 4 — Backend Selection & Repository Updates. Planning complete.
+Phase 5 — Migration Tool & Docker. **COMPLETE.**
 
 ## Progress
 Phase 1: Plan 2/2 complete
 Phase 2: Plan 2/2 complete
 Phase 3: Plan 2/2 complete
 Phase 4: Plan 3/3 complete
+Phase 5: Plan 2/2 complete
 
 ## Completed
 - [x] Forked tombii/better-ccflare to kamushadenes/better-ccflare
@@ -23,6 +24,8 @@ Phase 4: Plan 3/3 complete
 - [x] Phase 4 Plan 01: AsyncSqliteAdapter bridge + DatabaseDialect type + factory backend detection (15 TDD tests)
 - [x] Phase 4 Plan 02: Async database layer with dialect-aware SQL (10 TDD tests, 72 total pass)
 - [x] Phase 4 Plan 03: Caller async migration (~37 files), startup backend logging, test updates
+- [x] Phase 5 Plan 01: migrateToPostgres() function + CLI --migrate-to-postgres flag (8 TDD tests)
+- [x] Phase 5 Plan 02: Docker Compose postgres profile + Dockerfile DATABASE_URL docs
 
 ## Decisions Log
 | Date | Decision | Rationale |
@@ -65,7 +68,7 @@ Phase 4: Plan 3/3 complete
 | 04 | 03 | 1307s | 4 | 37 |
 
 ## Last Session
-- **Stopped at:** Completed 04-03-PLAN.md
+- **Stopped at:** Phase 5 complete (both plans executed)
 
 ## Blockers
 None.
