@@ -107,8 +107,6 @@ interface ParsedArgs {
 	forceResetRateLimit: string | null;
 	showConfig: boolean;
 	admin: boolean;
-	migrateToPostgres: boolean;
-	sqlitePath: string | null;
 }
 
 /**
@@ -445,8 +443,6 @@ function parseArgs(args: string[]): ParsedArgs {
 		forceResetRateLimit: null,
 		showConfig: false,
 		admin: false,
-		migrateToPostgres: false,
-		sqlitePath: null,
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -747,16 +743,6 @@ function parseArgs(args: string[]): ParsedArgs {
 				}
 				parsed.forceResetRateLimit = args[++i];
 				break;
-			case "--migrate-to-postgres":
-				parsed.migrateToPostgres = true;
-				break;
-			case "--sqlite-path":
-				if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
-					console.error("❌ --sqlite-path requires a path");
-					fastExit(1);
-				}
-				parsed.sqlitePath = args[++i];
-				break;
 			case "--show-config":
 				parsed.showConfig = true;
 				break;
@@ -839,9 +825,6 @@ API Key Management:
   --enable-api-key <name>    Enable a disabled API key
   --delete-api-key <name>    Delete an API key permanently
 
-Migration:
-  --migrate-to-postgres  Migrate SQLite data to PostgreSQL (requires DATABASE_URL)
-    --sqlite-path <path>   Source SQLite path (default: auto-detected)
 
 Debugging:
   --show-config              Show all configuration variables with their sources
@@ -861,45 +844,9 @@ Examples:
   better-ccflare --generate-api-key "Admin Key" --admin  # Generate admin key
   better-ccflare --list-api-keys               # List all API keys
   better-ccflare --disable-api-key "My App"    # Disable an API key
-  better-ccflare --migrate-to-postgres                    # Migrate default SQLite to PostgreSQL
-  better-ccflare --migrate-to-postgres --sqlite-path /path/to/db  # Migrate specific SQLite file
 `);
 		fastExit(0);
 		return;
-	}
-
-	// Handle --migrate-to-postgres before DatabaseFactory.initialize()
-	if (parsed.migrateToPostgres) {
-		if (!process.env.DATABASE_URL) {
-			console.error(
-				"❌ DATABASE_URL environment variable is required for PostgreSQL target",
-			);
-			console.error(
-				"Example: DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME",
-			);
-			fastExit(1);
-		}
-		const { migrateToPostgres, createAsyncAdapter, runMigrationsAsync } =
-			await import("@better-ccflare/database");
-		const { resolveDbPath } = await import("@better-ccflare/database");
-		const sqlitePath = parsed.sqlitePath || resolveDbPath();
-		console.log(`Migrating SQLite database: ${sqlitePath}`);
-		console.log(`Target: PostgreSQL (${process.env.DATABASE_URL})`);
-		const target = await createAsyncAdapter();
-		await runMigrationsAsync(target);
-		const result = await migrateToPostgres(sqlitePath, target);
-		console.log(`\nMigration complete:`);
-		console.log(`  Total rows: ${result.totalRows}`);
-		console.log(`  Duration: ${result.durationMs}ms`);
-		for (const table of result.tables) {
-			if (table.skipped) {
-				console.log(`  ${table.table}: skipped (not found in source)`);
-			} else {
-				console.log(`  ${table.table}: ${table.rowsMigrated} rows`);
-			}
-		}
-		await target.close();
-		fastExit(0);
 	}
 
 	// Handle commands that don't need database or DI initialization
