@@ -10,14 +10,14 @@ const log = new Logger("AccountSelector");
  * @param ctx - The proxy context
  * @returns Array of ordered accounts
  */
-export function getOrderedAccounts(
+export async function getOrderedAccounts(
 	meta: RequestMeta,
 	ctx: ProxyContext,
-): Account[] {
+): Promise<Account[]> {
 	try {
-		const allAccounts = ctx.dbOps.getAllAccounts();
+		const allAccounts = await ctx.dbOps.getAllAccounts();
 		// Return all accounts - the provider will be determined dynamically per account
-		return ctx.strategy.select(allAccounts, meta);
+		return await ctx.strategy.select(allAccounts, meta);
 	} catch (error) {
 		log.error("Failed to get accounts from database:", error);
 		console.error("\n❌ DATABASE ERROR DETECTED");
@@ -42,16 +42,16 @@ export function getOrderedAccounts(
  * @param ctx - The proxy context
  * @returns Array of selected accounts
  */
-export function selectAccountsForRequest(
+export async function selectAccountsForRequest(
 	meta: RequestMeta,
 	ctx: ProxyContext,
-): Account[] {
+): Promise<Account[]> {
 	// Check if a specific account is requested via special header
 	if (meta.headers) {
 		const forcedAccountId = meta.headers.get("x-better-ccflare-account-id");
 		if (forcedAccountId) {
 			try {
-				const allAccounts = ctx.dbOps.getAllAccounts();
+				const allAccounts = await ctx.dbOps.getAllAccounts();
 				const forcedAccount = allAccounts.find(
 					(acc) => acc.id === forcedAccountId,
 				);
@@ -81,5 +81,5 @@ export function selectAccountsForRequest(
 		}
 	}
 
-	return getOrderedAccounts(meta, ctx);
+	return await getOrderedAccounts(meta, ctx);
 }

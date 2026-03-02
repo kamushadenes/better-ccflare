@@ -23,7 +23,7 @@ describe("OAuth Handler - Backward Compatibility", () => {
 
 		// Initialize test database
 		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+		dbOps = await DatabaseFactory.getInstance();
 
 		// Create handler
 		handler = createOAuthInitHandler(dbOps);

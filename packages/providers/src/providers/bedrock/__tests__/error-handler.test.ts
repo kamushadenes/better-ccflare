@@ -4,12 +4,12 @@ import { translateBedrockError } from "../error-handler";
 // Mock database dependencies used by getModelNotFoundSuggestion
 mock.module("@better-ccflare/database", () => ({
 	DatabaseFactory: {
-		getInstance: mock(() => ({
-			getDatabase: mock(() => ({})),
+		getInstance: mock(async () => ({
+			getAdapter: mock(() => ({})),
 		})),
 	},
 	ModelTranslationRepository: mock(() => ({
-		findSimilar: mock(() => []),
+		findSimilar: mock(async () => []),
 	})),
 }));
 
@@ -28,8 +28,11 @@ describe("translateBedrockError", () => {
 		];
 
 		for (const name of credentialErrorNames) {
-			it(`maps ${name} to 403`, () => {
-				const result = translateBedrockError({ name, message: "auth failed" });
+			it(`maps ${name} to 403`, async () => {
+				const result = await translateBedrockError({
+					name,
+					message: "auth failed",
+				});
 				expect(result.statusCode).toBe(403);
 				expect(result.message).toContain("AWS credentials invalid");
 			});
@@ -37,8 +40,8 @@ describe("translateBedrockError", () => {
 	});
 
 	describe("throttling errors → 429", () => {
-		it("maps ThrottlingException to 429", () => {
-			const result = translateBedrockError({
+		it("maps ThrottlingException to 429", async () => {
+			const result = await translateBedrockError({
 				name: "ThrottlingException",
 				message: "Rate exceeded",
 				requestId: "req-123",
@@ -48,30 +51,34 @@ describe("translateBedrockError", () => {
 			expect(result.message).toContain("req-123");
 		});
 
-		it("maps throttlingException (camelCase) to 429", () => {
-			const result = translateBedrockError({ name: "throttlingException" });
+		it("maps throttlingException (camelCase) to 429", async () => {
+			const result = await translateBedrockError({
+				name: "throttlingException",
+			});
 			expect(result.statusCode).toBe(429);
 		});
 	});
 
 	describe("service errors → 503", () => {
-		it("maps ServiceUnavailableException to 503", () => {
-			const result = translateBedrockError({
+		it("maps ServiceUnavailableException to 503", async () => {
+			const result = await translateBedrockError({
 				name: "ServiceUnavailableException",
 			});
 			expect(result.statusCode).toBe(503);
 			expect(result.message).toContain("unavailable");
 		});
 
-		it("maps InternalServerException to 503", () => {
-			const result = translateBedrockError({ name: "InternalServerException" });
+		it("maps InternalServerException to 503", async () => {
+			const result = await translateBedrockError({
+				name: "InternalServerException",
+			});
 			expect(result.statusCode).toBe(503);
 		});
 	});
 
 	describe("model not found errors → 404", () => {
-		it("maps ResourceNotFoundException to 404", () => {
-			const result = translateBedrockError({
+		it("maps ResourceNotFoundException to 404", async () => {
+			const result = await translateBedrockError({
 				name: "ResourceNotFoundException",
 				message: "Model not found",
 			});
@@ -79,8 +86,8 @@ describe("translateBedrockError", () => {
 			expect(result.message).toContain("ResourceNotFoundException");
 		});
 
-		it("includes error message in response", () => {
-			const result = translateBedrockError({
+		it("includes error message in response", async () => {
+			const result = await translateBedrockError({
 				name: "ResourceNotFoundException",
 				message: "The model anthropic.claude-3-sonnet does not exist",
 			});
@@ -92,8 +99,8 @@ describe("translateBedrockError", () => {
 	});
 
 	describe("validation errors → 400", () => {
-		it("maps ValidationException to 400", () => {
-			const result = translateBedrockError({
+		it("maps ValidationException to 400", async () => {
+			const result = await translateBedrockError({
 				name: "ValidationException",
 				message: "Invalid parameter value",
 			});
@@ -103,8 +110,8 @@ describe("translateBedrockError", () => {
 	});
 
 	describe("unknown errors → 500", () => {
-		it("maps unknown error names to 500", () => {
-			const result = translateBedrockError({
+		it("maps unknown error names to 500", async () => {
+			const result = await translateBedrockError({
 				name: "SomeUnknownException",
 				message: "Something went wrong",
 			});
@@ -112,20 +119,20 @@ describe("translateBedrockError", () => {
 			expect(result.message).toContain("SomeUnknownException");
 		});
 
-		it("handles missing error name gracefully", () => {
-			const result = translateBedrockError({ message: "no name" });
+		it("handles missing error name gracefully", async () => {
+			const result = await translateBedrockError({ message: "no name" });
 			expect(result.statusCode).toBe(500);
 			expect(result.message).toContain("Unknown");
 		});
 
-		it("handles non-object errors gracefully", () => {
-			const result = translateBedrockError("string error");
+		it("handles non-object errors gracefully", async () => {
+			const result = await translateBedrockError("string error");
 			expect(result.statusCode).toBe(500);
 		});
 
-		it("maps SerializationException to 500", () => {
+		it("maps SerializationException to 500", async () => {
 			// Seen in logs: "SerializationException - Unexpected field type"
-			const result = translateBedrockError({
+			const result = await translateBedrockError({
 				name: "SerializationException",
 				message: "Unexpected field type",
 			});
@@ -135,8 +142,10 @@ describe("translateBedrockError", () => {
 	});
 
 	describe("requestId in throttling message", () => {
-		it("uses unknown when requestId is absent", () => {
-			const result = translateBedrockError({ name: "ThrottlingException" });
+		it("uses unknown when requestId is absent", async () => {
+			const result = await translateBedrockError({
+				name: "ThrottlingException",
+			});
 			expect(result.message).toContain("unknown");
 		});
 	});
@@ -149,54 +158,44 @@ describe("getModelNotFoundSuggestion regex patterns (via translateBedrockError)"
 	// but we verify the function doesn't throw or hang on adversarial input.
 
 	describe("pattern 1: model'\"...'\": quoted model name", () => {
-		it("handles: Model 'claude-3-5-sonnet' not found", () => {
-			expect(() =>
-				translateBedrockError({
-					name: "ResourceNotFoundException",
-					message: "Model 'claude-3-5-sonnet' not found",
-				}),
-			).not.toThrow();
+		it("handles: Model 'claude-3-5-sonnet' not found", async () => {
+			await translateBedrockError({
+				name: "ResourceNotFoundException",
+				message: "Model 'claude-3-5-sonnet' not found",
+			});
 		});
 
-		it('handles: model": "anthropic.claude-3-sonnet-20240229-v1:0"', () => {
-			expect(() =>
-				translateBedrockError({
-					name: "ResourceNotFoundException",
-					message: 'model": "anthropic.claude-3-sonnet-20240229-v1:0"',
-				}),
-			).not.toThrow();
+		it('handles: model": "anthropic.claude-3-sonnet-20240229-v1:0"', async () => {
+			await translateBedrockError({
+				name: "ResourceNotFoundException",
+				message: 'model": "anthropic.claude-3-sonnet-20240229-v1:0"',
+			});
 		});
 
-		it('handles: model"="claude-3-opus"', () => {
-			expect(() =>
-				translateBedrockError({
-					name: "ResourceNotFoundException",
-					message: 'model"="claude-3-opus"',
-				}),
-			).not.toThrow();
+		it('handles: model"="claude-3-opus"', async () => {
+			await translateBedrockError({
+				name: "ResourceNotFoundException",
+				message: 'model"="claude-3-opus"',
+			});
 		});
 	});
 
 	describe("pattern 2: foundation-model/... ARN path", () => {
-		it("handles: arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0", () => {
-			expect(() =>
-				translateBedrockError({
-					name: "ResourceNotFoundException",
-					message:
-						"Could not find model arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
-				}),
-			).not.toThrow();
+		it("handles: arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0", async () => {
+			await translateBedrockError({
+				name: "ResourceNotFoundException",
+				message:
+					"Could not find model arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
+			});
 		});
 	});
 
 	describe("pattern 3: model <name> plain word", () => {
-		it("handles: model claude-3-opus not found", () => {
-			expect(() =>
-				translateBedrockError({
-					name: "ResourceNotFoundException",
-					message: "model claude-3-opus not found",
-				}),
-			).not.toThrow();
+		it("handles: model claude-3-opus not found", async () => {
+			await translateBedrockError({
+				name: "ResourceNotFoundException",
+				message: "model claude-3-opus not found",
+			});
 		});
 	});
 
@@ -205,30 +204,30 @@ describe("getModelNotFoundSuggestion regex patterns (via translateBedrockError)"
 		// starts with 'model"' followed by many spaces (no closing quote).
 		// With the old \s* regex these could cause catastrophic backtracking.
 
-		it('does not hang on model" + 1000 spaces (no closing quote)', () => {
+		it('does not hang on model" + 1000 spaces (no closing quote)', async () => {
 			const malicious = `model"${" ".repeat(1000)}`;
 			const start = Date.now();
-			translateBedrockError({
+			await translateBedrockError({
 				name: "ResourceNotFoundException",
 				message: malicious,
 			});
 			expect(Date.now() - start).toBeLessThan(100);
 		});
 
-		it('does not hang on model" + 1000 tabs (no closing quote)', () => {
+		it('does not hang on model" + 1000 tabs (no closing quote)', async () => {
 			const malicious = `model"${"\t".repeat(1000)}`;
 			const start = Date.now();
-			translateBedrockError({
+			await translateBedrockError({
 				name: "ResourceNotFoundException",
 				message: malicious,
 			});
 			expect(Date.now() - start).toBeLessThan(100);
 		});
 
-		it("does not hang on model + 1000 spaces (no model name follows)", () => {
+		it("does not hang on model + 1000 spaces (no model name follows)", async () => {
 			const malicious = `model${" ".repeat(1000)}`;
 			const start = Date.now();
-			translateBedrockError({
+			await translateBedrockError({
 				name: "ResourceNotFoundException",
 				message: malicious,
 			});

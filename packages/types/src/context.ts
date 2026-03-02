@@ -28,7 +28,10 @@ export interface LoadBalancingStrategy {
 	 * Accounts that are rate-limited should be filtered out.
 	 * The first account in the list should be tried first.
 	 */
-	select(accounts: Account[], meta: RequestMeta): Account[];
+	select(
+		accounts: Account[],
+		meta: RequestMeta,
+	): Account[] | Promise<Account[]>;
 
 	/**
 	 * Optional initialization method to inject dependencies

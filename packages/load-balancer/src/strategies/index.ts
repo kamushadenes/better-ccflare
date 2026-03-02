@@ -26,7 +26,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		this.store = store;
 	}
 
-	private resetSessionIfExpired(account: Account): void {
+	private async resetSessionIfExpired(account: Account): Promise<void> {
 		const now = Date.now();
 
 		// Check if session has exceeded the fixed duration (only for providers that require session duration tracking)
@@ -56,7 +56,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 						? `Session expired for account ${account.name} due to ${resetReason}, starting new session`
 						: `Starting new session for account ${account.name}`,
 				);
-				this.store.resetAccountSession(account.id, now);
+				await this.store.resetAccountSession(account.id, now);
 
 				// Update the account object to reflect changes
 				account.session_start = now;
@@ -87,7 +87,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		);
 	}
 
-	select(accounts: Account[], meta: RequestMeta): Account[] {
+	async select(accounts: Account[], meta: RequestMeta): Promise<Account[]> {
 		const now = Date.now();
 
 		// Check if session tracking should be bypassed (for auto-refresh messages)
@@ -116,7 +116,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		if (fallbackCandidates.length > 0) {
 			const chosenFallback = fallbackCandidates[0];
 			if (!bypassSession) {
-				this.resetSessionIfExpired(chosenFallback);
+				await this.resetSessionIfExpired(chosenFallback);
 			}
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
@@ -127,7 +127,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 				this.log.info(
 					`Unpausing account ${chosenFallback.name} due to auto-fallback reactivation`,
 				);
-				this.store.resumeAccount(chosenFallback.id);
+				await this.store.resumeAccount(chosenFallback.id);
 				chosenFallback.paused = false;
 			}
 
@@ -186,7 +186,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			} else {
 				// Reset session if expired (shouldn't happen but just in case)
 				if (!bypassSession) {
-					this.resetSessionIfExpired(activeAccount);
+					await this.resetSessionIfExpired(activeAccount);
 				}
 				this.log.info(
 					`Continuing session for account ${activeAccount.name} (${activeAccount.session_request_count} requests in session)`,
@@ -210,7 +210,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Pick the highest priority account (first in sorted list) and start a new session with it
 		const chosenAccount = available[0];
 		if (!bypassSession) {
-			this.resetSessionIfExpired(chosenAccount);
+			await this.resetSessionIfExpired(chosenAccount);
 		}
 
 		// Return chosen account first, then others as fallback (already sorted by priority)

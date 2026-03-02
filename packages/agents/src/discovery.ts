@@ -387,7 +387,9 @@ export class AgentRegistry {
 		updates: Partial<
 			Pick<Agent, "description" | "model" | "tools" | "color" | "systemPrompt">
 		>,
-		dbOps?: { deleteAgentPreference: (agentId: string) => boolean },
+		dbOps?: {
+			deleteAgentPreference: (agentId: string) => boolean | Promise<boolean>;
+		},
 	): Promise<Agent> {
 		// Ensure we're initialized
 		await this.initialize();

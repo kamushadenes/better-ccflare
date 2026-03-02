@@ -23,7 +23,7 @@ describe("Kilo Gateway Handler", () => {
 
 		// Initialize test database
 		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+		dbOps = await DatabaseFactory.getInstance();
 
 		// Create handler
 		handler = createKiloAccountAddHandler(dbOps);

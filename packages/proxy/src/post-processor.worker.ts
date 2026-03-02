@@ -86,7 +86,7 @@ let tokenEncoder: Tiktoken | null = null;
 })();
 
 // Initialize database connection for worker
-const dbOps = new DatabaseOperations();
+const dbOps = await DatabaseOperations.create();
 const asyncWriter = new AsyncDbWriter();
 
 // Environment variables
@@ -726,7 +726,7 @@ async function handleShutdown(): Promise<void> {
 	stopCleanupInterval();
 
 	await asyncWriter.dispose();
-	dbOps.close();
+	await dbOps.close();
 	// Worker will be terminated by main thread
 }
 

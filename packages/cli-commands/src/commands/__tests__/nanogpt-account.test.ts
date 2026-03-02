@@ -22,7 +22,7 @@ describe("CLI NanoGPT Account Creation", () => {
 
 		// Initialize test database
 		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+		dbOps = await DatabaseFactory.getInstance();
 	});
 
 	afterAll(() => {

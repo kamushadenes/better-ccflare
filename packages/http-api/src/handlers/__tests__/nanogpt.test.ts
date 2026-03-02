@@ -23,7 +23,7 @@ describe("NanoGPT Handler", () => {
 
 		// Initialize test database
 		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+		dbOps = await DatabaseFactory.getInstance();
 
 		// Create handler
 		handler = createNanoGPTAccountAddHandler(dbOps);

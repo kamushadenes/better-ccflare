@@ -26,8 +26,8 @@ export class AuthService {
 	/**
 	 * Check if API authentication is enabled (has at least one active API key)
 	 */
-	isAuthenticationEnabled(): boolean {
-		return this.dbOps.countActiveApiKeys() > 0;
+	async isAuthenticationEnabled(): Promise<boolean> {
+		return (await this.dbOps.countActiveApiKeys()) > 0;
 	}
 
 	/**
@@ -42,7 +42,7 @@ export class AuthService {
 		}
 
 		// If no API keys are configured, authentication is disabled
-		if (!this.isAuthenticationEnabled()) {
+		if (!(await this.isAuthenticationEnabled())) {
 			return {
 				isAuthenticated: true,
 				error: undefined,
@@ -50,7 +50,7 @@ export class AuthService {
 		}
 
 		// Get all active API keys
-		const activeApiKeys = this.dbOps.getActiveApiKeys();
+		const activeApiKeys = await this.dbOps.getActiveApiKeys();
 
 		// Check each API key
 		for (const keyRecord of activeApiKeys) {
@@ -60,7 +60,7 @@ export class AuthService {
 			);
 			if (isValid) {
 				// Update usage statistics
-				this.dbOps.updateApiKeyUsage(keyRecord.id, Date.now());
+				await this.dbOps.updateApiKeyUsage(keyRecord.id, Date.now());
 
 				return {
 					isAuthenticated: true,
@@ -130,7 +130,7 @@ export class AuthService {
 	/**
 	 * Check if a path should be exempt from authentication
 	 */
-	isPathExempt(path: string, method: string): boolean {
+	async isPathExempt(path: string, method: string): Promise<boolean> {
 		// Health endpoint is always exempt
 		if (path === "/health") {
 			return true;
@@ -146,7 +146,7 @@ export class AuthService {
 		if (path.startsWith("/api/api-keys")) {
 			// Only allow POST (key creation) without auth if no keys exist
 			if (path === "/api/api-keys" && method === "POST") {
-				return !this.isAuthenticationEnabled(); // Only exempt if no keys exist
+				return !(await this.isAuthenticationEnabled()); // Only exempt if no keys exist
 			}
 			// All other API key operations require authentication
 			return false;
@@ -177,14 +177,14 @@ export class AuthService {
 		method: string,
 	): Promise<AuthenticationResult> {
 		// If path is exempt, allow without authentication
-		if (this.isPathExempt(path, method)) {
+		if (await this.isPathExempt(path, method)) {
 			return {
 				isAuthenticated: true,
 			};
 		}
 
 		// If authentication is not enabled (no API keys), allow
-		if (!this.isAuthenticationEnabled()) {
+		if (!(await this.isAuthenticationEnabled())) {
 			return {
 				isAuthenticated: true,
 			};

@@ -19,7 +19,7 @@ export function createAgentsListHandler(dbOps: DatabaseOperations) {
 	return async (): Promise<Response> => {
 		try {
 			const agents = await agentRegistry.getAgents();
-			const preferences = dbOps.getAllAgentPreferences();
+			const preferences = await dbOps.getAllAgentPreferences();
 
 			// Create a map of preferences for easy lookup
 			const prefMap = new Map(preferences.map((p) => [p.agent_id, p.model]));
@@ -70,7 +70,7 @@ export function createAgentPreferenceUpdateHandler(dbOps: DatabaseOperations) {
 			}
 
 			// Update preference
-			dbOps.setAgentPreference(agentId, model);
+			await dbOps.setAgentPreference(agentId, model);
 
 			return jsonResponse({
 				success: true,
@@ -147,7 +147,7 @@ export function createBulkAgentPreferenceUpdateHandler(
 			}
 
 			// Update all agent preferences in bulk
-			dbOps.setBulkAgentPreferences(agentIds, modelValidation);
+			await dbOps.setBulkAgentPreferences(agentIds, modelValidation);
 
 			log.info(
 				`Updated ${agentIds.length} agent preferences to model: ${modelValidation}`,

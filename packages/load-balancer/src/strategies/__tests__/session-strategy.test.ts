@@ -57,7 +57,7 @@ describe("SessionStrategy", () => {
 		mockStore.clear();
 	});
 
-	it("should reset session when rate limit window has reset", () => {
+	it("should reset session when rate limit window has reset", async () => {
 		const account: Account = {
 			id: "test-account-1",
 			name: "test-account-1",
@@ -89,7 +89,7 @@ describe("SessionStrategy", () => {
 		const _originalRequestCount = account.session_request_count;
 
 		// The account should be selected and session should be reset due to rate limit window reset
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -106,7 +106,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(0);
 	});
 
-	it("should work normally for non-Anthropic providers without session duration tracking", () => {
+	it("should work normally for non-Anthropic providers without session duration tracking", async () => {
 		const account: Account = {
 			id: "test-account-2",
 			name: "test-account-2",
@@ -138,7 +138,7 @@ describe("SessionStrategy", () => {
 		const originalRequestCount = account.session_request_count;
 
 		// The account should be selected normally, session duration tracking doesn't apply to non-Anthropic
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -153,7 +153,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should work normally when rate_limit_reset is in the future", () => {
+	it("should work normally when rate_limit_reset is in the future", async () => {
 		const account: Account = {
 			id: "test-account-3",
 			name: "test-account-3",
@@ -185,7 +185,7 @@ describe("SessionStrategy", () => {
 		const originalRequestCount = account.session_request_count;
 
 		// The account should be selected normally since rate limit reset is in the future
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -200,7 +200,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should reset session when both fixed duration and rate limit have expired for Anthropic accounts", () => {
+	it("should reset session when both fixed duration and rate limit have expired for Anthropic accounts", async () => {
 		const account: Account = {
 			id: "test-account-4",
 			name: "test-account-4",
@@ -232,7 +232,7 @@ describe("SessionStrategy", () => {
 		const _originalRequestCount = account.session_request_count;
 
 		// The account should be selected and session should be reset (both conditions true)
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -249,7 +249,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(0);
 	});
 
-	it("should reset session when fixed duration expired for Anthropic accounts", () => {
+	it("should reset session when fixed duration expired for Anthropic accounts", async () => {
 		const account: Account = {
 			id: "test-account-5-anthropic",
 			name: "test-account-5-anthropic",
@@ -281,7 +281,7 @@ describe("SessionStrategy", () => {
 		const _originalRequestCount = account.session_request_count;
 
 		// The account should be selected and session should be reset (fixed duration expired for Anthropic)
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -298,7 +298,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(0);
 	});
 
-	it("should not reset session when fixed duration expired for non-Anthropic accounts", () => {
+	it("should not reset session when fixed duration expired for non-Anthropic accounts", async () => {
 		const account: Account = {
 			id: "test-account-6-non-anthropic",
 			name: "test-account-6-non-anthropic",
@@ -330,7 +330,7 @@ describe("SessionStrategy", () => {
 		const originalRequestCount = account.session_request_count;
 
 		// The account should be selected, but session should NOT be reset (no duration tracking for non-Anthropic)
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -345,7 +345,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should work normally when rate_limit_reset is explicitly null", () => {
+	it("should work normally when rate_limit_reset is explicitly null", async () => {
 		const account: Account = {
 			id: "test-account-5",
 			name: "test-account-5",
@@ -377,7 +377,7 @@ describe("SessionStrategy", () => {
 		const originalRequestCount = account.session_request_count;
 
 		// The account should be selected normally since rate_limit_reset is null
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -392,7 +392,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should not reset session when rate_limit_reset equals current time (boundary condition)", () => {
+	it("should not reset session when rate_limit_reset equals current time (boundary condition)", async () => {
 		const now = Date.now();
 		const account: Account = {
 			id: "test-account-boundary",
@@ -425,7 +425,7 @@ describe("SessionStrategy", () => {
 		const originalRequestCount = account.session_request_count;
 
 		// The account should be selected normally since rate_limit_reset equals now (not less than now - 1000)
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -440,7 +440,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should reset session when rate_limit_reset is just less than now - 1000 (boundary condition)", () => {
+	it("should reset session when rate_limit_reset is just less than now - 1000 (boundary condition)", async () => {
 		const now = Date.now();
 		const account: Account = {
 			id: "test-account-boundary-just-expired",
@@ -473,7 +473,7 @@ describe("SessionStrategy", () => {
 		const _originalRequestCount = account.session_request_count;
 
 		// The account should be selected and session should be reset since rate_limit_reset < now - 1000
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -490,7 +490,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(0);
 	});
 
-	it("should handle multiple accounts with different rate limit reset scenarios", () => {
+	it("should handle multiple accounts with different rate limit reset scenarios", async () => {
 		const now = Date.now();
 		// Reset all sessions to ensure no active sessions exist
 		const account1: Account = {
@@ -573,7 +573,7 @@ describe("SessionStrategy", () => {
 
 		// All accounts have no active sessions, so priority 0 (account1) should be selected
 		// Since account1 has rate_limit_reset < now - 1000, its session should be reset
-		const result = strategy.select([account2, account3, account1], meta);
+		const result = await strategy.select([account2, account3, account1], meta);
 
 		// Verify the highest priority account (account1) is selected as the first result
 		expect(result[0]).toBe(account1);
@@ -597,7 +597,7 @@ describe("SessionStrategy", () => {
 		expect(account3.session_request_count).toBe(0);
 	});
 
-	it("should handle auto-fallback with multiple accounts at boundary conditions", () => {
+	it("should handle auto-fallback with multiple accounts at boundary conditions", async () => {
 		const now = Date.now();
 		const account1: Account = {
 			id: "test-account-auto-fallback-reset",
@@ -652,7 +652,7 @@ describe("SessionStrategy", () => {
 		};
 
 		// The account with expired reset should be selected via auto-fallback
-		const result = strategy.select([account2, account1], meta);
+		const result = await strategy.select([account2, account1], meta);
 
 		// Verify the account with expired reset and higher priority (account1) is selected first due to auto-fallback
 		expect(result[0]).toBe(account1);
@@ -664,7 +664,7 @@ describe("SessionStrategy", () => {
 		expect(account2.paused).toBe(true); // Should remain paused
 	});
 
-	it("should handle unknown providers gracefully", () => {
+	it("should handle unknown providers gracefully", async () => {
 		const now = Date.now();
 		const account: Account = {
 			id: "test-account-unknown",
@@ -698,7 +698,7 @@ describe("SessionStrategy", () => {
 
 		// The account should be selected normally, and since it's an unknown provider,
 		// it should be treated as pay-as-you-go (no session duration tracking)
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);
@@ -713,7 +713,7 @@ describe("SessionStrategy", () => {
 		expect(account.session_request_count).toBe(originalRequestCount);
 	});
 
-	it("should not reset session for Claude console API accounts (pay-as-you-go, no session tracking)", () => {
+	it("should not reset session for Claude console API accounts (pay-as-you-go, no session tracking)", async () => {
 		const account: Account = {
 			id: "test-account-console-api",
 			name: "test-account-console-api",
@@ -745,7 +745,7 @@ describe("SessionStrategy", () => {
 		const originalRequestCount = account.session_request_count;
 
 		// The account should be selected, but session should NOT be reset (console API accounts have no session tracking)
-		const result = strategy.select([account], meta);
+		const result = await strategy.select([account], meta);
 
 		// Verify the account is selected as the first (highest priority) result
 		expect(result[0]).toBe(account);

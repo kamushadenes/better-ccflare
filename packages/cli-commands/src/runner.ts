@@ -3,6 +3,7 @@ import { Config } from "@better-ccflare/config";
 import { shutdown } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import { DatabaseFactory } from "@better-ccflare/database";
+import { Logger } from "@better-ccflare/logger";
 import {
 	addAccount,
 	getAccountsList,
@@ -24,8 +25,17 @@ export async function runCli(argv: string[]): Promise<void> {
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);
 	DatabaseFactory.initialize();
-	const dbOps = DatabaseFactory.getInstance();
+	const dbOps = await DatabaseFactory.getInstance();
 	container.registerInstance(SERVICE_KEYS.Database, dbOps);
+
+	// Log database backend
+	const dbLog = new Logger("Database");
+	const backend = DatabaseFactory.getBackendType();
+	if (backend === "postgres") {
+		dbLog.info("Database backend: PostgreSQL (DATABASE_URL configured)");
+	} else {
+		dbLog.info("Database backend: SQLite");
+	}
 
 	try {
 		// Parse command line arguments
@@ -101,7 +111,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "list": {
-				const accounts = getAccountsList(dbOps);
+				const accounts = await getAccountsList(dbOps);
 
 				if (accounts.length === 0) {
 					console.log("No accounts found");
@@ -179,7 +189,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = pauseAccount(dbOps, name);
+				const result = await pauseAccount(dbOps, name);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);
@@ -195,7 +205,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = resumeAccount(dbOps, name);
+				const result = await resumeAccount(dbOps, name);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);
@@ -225,7 +235,7 @@ export async function runCli(argv: string[]): Promise<void> {
 					process.exit(1);
 				}
 
-				const result = setAccountPriority(dbOps, name, priority);
+				const result = await setAccountPriority(dbOps, name, priority);
 				console.log(result.message);
 				if (!result.success) {
 					process.exit(1);
@@ -240,12 +250,12 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "token-health": {
-				checkTokenHealth(dbOps);
+				await checkTokenHealth(dbOps);
 				break;
 			}
 
 			case "reauth-needed": {
-				checkReauthNeeded(dbOps);
+				await checkReauthNeeded(dbOps);
 				break;
 			}
 

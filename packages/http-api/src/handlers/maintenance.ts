@@ -7,12 +7,12 @@ export function createCleanupHandler(
 	dbOps: DatabaseOperations,
 	config: Config,
 ) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		const payloadDays = config.getDataRetentionDays();
 		const requestDays = config.getRequestRetentionDays();
 		const payloadMs = payloadDays * 24 * 60 * 60 * 1000;
 		const requestMs = requestDays * 24 * 60 * 60 * 1000;
-		const { removedRequests, removedPayloads } = dbOps.cleanupOldRequests(
+		const { removedRequests, removedPayloads } = await dbOps.cleanupOldRequests(
 			payloadMs,
 			requestMs,
 		);
@@ -29,7 +29,7 @@ export function createCleanupHandler(
 }
 
 export function createCompactHandler(dbOps: DatabaseOperations) {
-	return (): Response => {
+	return async (): Promise<Response> => {
 		dbOps.compact();
 		return jsonResponse({ ok: true });
 	};

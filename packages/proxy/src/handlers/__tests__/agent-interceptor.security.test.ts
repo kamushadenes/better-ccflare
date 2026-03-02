@@ -44,7 +44,7 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 		return buffer;
 	}
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		// Setup database before tests
 		try {
 			if (existsSync(TEST_DB_PATH)) {
@@ -54,7 +54,7 @@ describe("Agent Interceptor - Directory Traversal Security", () => {
 			console.warn("Failed to clean up existing test database:", error);
 		}
 		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+		dbOps = await DatabaseFactory.getInstance();
 	});
 
 	afterAll(() => {

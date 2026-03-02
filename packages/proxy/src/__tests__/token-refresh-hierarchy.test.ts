@@ -29,7 +29,7 @@ describe("Auto-Refresh Token Hierarchy", () => {
 
 		// Initialize test database
 		DatabaseFactory.initialize(TEST_DB_PATH);
-		dbOps = DatabaseFactory.getInstance();
+		dbOps = await DatabaseFactory.getInstance();
 		db = dbOps.getDatabase();
 
 		// Create mock proxy context

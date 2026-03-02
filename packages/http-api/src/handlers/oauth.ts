@@ -79,7 +79,7 @@ export function createOAuthInitHandler(dbOps: DatabaseOperations) {
 				});
 
 				// Store custom endpoint in session for later use
-				dbOps.createOAuthSession(
+				await dbOps.createOAuthSession(
 					flowResult.sessionId,
 					name,
 					flowResult.pkce.verifier,
@@ -142,7 +142,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 			})!;
 
 			// Get stored PKCE verifier from database
-			const oauthSession = dbOps.getOAuthSession(sessionId);
+			const oauthSession = await dbOps.getOAuthSession(sessionId);
 			if (!oauthSession) {
 				return errorResponse(
 					BadRequest("OAuth session expired or invalid. Please try again."),
@@ -196,7 +196,7 @@ export function createOAuthCallbackHandler(dbOps: DatabaseOperations) {
 				);
 
 				// Clean up OAuth session from database
-				dbOps.deleteOAuthSession(sessionId);
+				await dbOps.deleteOAuthSession(sessionId);
 
 				log.info(`Successfully added account '${name}' via OAuth`);
 
