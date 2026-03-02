@@ -27,9 +27,9 @@ export async function ensureSchemaAsync(
 			api_key TEXT,
 			refresh_token TEXT NOT NULL,
 			access_token TEXT,
-			expires_at INTEGER,
-			created_at INTEGER NOT NULL,
-			last_used INTEGER,
+			expires_at BIGINT,
+			created_at BIGINT NOT NULL,
+			last_used BIGINT,
 			request_count INTEGER DEFAULT 0,
 			total_requests INTEGER DEFAULT 0,
 			priority INTEGER DEFAULT 0
@@ -40,7 +40,7 @@ export async function ensureSchemaAsync(
 	await adapter.exec(`
 		CREATE TABLE IF NOT EXISTS requests (
 			id TEXT PRIMARY KEY,
-			timestamp INTEGER NOT NULL,
+			timestamp BIGINT NOT NULL,
 			method TEXT NOT NULL,
 			path TEXT NOT NULL,
 			account_used TEXT,
@@ -94,8 +94,8 @@ export async function ensureSchemaAsync(
 			account_name TEXT NOT NULL,
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			expires_at INTEGER NOT NULL
+			created_at BIGINT NOT NULL,
+			expires_at BIGINT NOT NULL
 		)
 	`);
 
@@ -109,7 +109,7 @@ export async function ensureSchemaAsync(
 		CREATE TABLE IF NOT EXISTS agent_preferences (
 			agent_id TEXT PRIMARY KEY,
 			model TEXT NOT NULL,
-			updated_at INTEGER NOT NULL
+			updated_at BIGINT NOT NULL
 		)
 	`);
 
@@ -120,8 +120,8 @@ export async function ensureSchemaAsync(
 			name TEXT NOT NULL UNIQUE,
 			hashed_key TEXT NOT NULL UNIQUE,
 			prefix_last_8 TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			last_used INTEGER,
+			created_at BIGINT NOT NULL,
+			last_used BIGINT,
 			usage_count INTEGER DEFAULT 0,
 			is_active INTEGER DEFAULT 1
 		)
@@ -145,8 +145,8 @@ export async function ensureSchemaAsync(
 			bedrock_model_id TEXT NOT NULL,
 			is_default INTEGER DEFAULT 1,
 			auto_discovered INTEGER DEFAULT 0,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
 		)
 	`);
 
@@ -268,6 +268,36 @@ export async function runMigrationsAsync(
 	// Ensure base schema exists first (outside transaction as it creates tables)
 	await ensureSchemaAsync(adapter);
 
+	// Migrate INTEGER timestamp columns to BIGINT (fixes overflow for ms timestamps on PostgreSQL)
+	if (adapter.dialect === "postgres") {
+		const timestampColumns = [
+			["accounts", "expires_at"],
+			["accounts", "created_at"],
+			["accounts", "last_used"],
+			["accounts", "rate_limited_until"],
+			["accounts", "session_start"],
+			["accounts", "rate_limit_reset"],
+			["requests", "timestamp"],
+			["oauth_sessions", "created_at"],
+			["oauth_sessions", "expires_at"],
+			["agent_preferences", "updated_at"],
+			["api_keys", "created_at"],
+			["api_keys", "last_used"],
+			["model_translations", "created_at"],
+			["model_translations", "updated_at"],
+		];
+		for (const [table, column] of timestampColumns) {
+			try {
+				await adapter.exec(
+					`ALTER TABLE ${table} ALTER COLUMN ${column} TYPE BIGINT`,
+				);
+			} catch (_e) {
+				// Column may not exist yet (added by later migration), ignore
+			}
+		}
+	}
+
+
 	await adapter.transaction(async () => {
 		// Check accounts columns
 		const accountsColumns = await getTableColumnsAsync(adapter, "accounts");
@@ -275,7 +305,7 @@ export async function runMigrationsAsync(
 		// Add rate_limited_until column if it doesn't exist
 		if (!accountsColumns.includes("rate_limited_until")) {
 			await adapter.exec(
-				"ALTER TABLE accounts ADD COLUMN rate_limited_until INTEGER",
+				"ALTER TABLE accounts ADD COLUMN rate_limited_until BIGINT",
 			);
 			log.info("Added rate_limited_until column to accounts table");
 		}
@@ -283,7 +313,7 @@ export async function runMigrationsAsync(
 		// Add session_start column if it doesn't exist
 		if (!accountsColumns.includes("session_start")) {
 			await adapter.exec(
-				"ALTER TABLE accounts ADD COLUMN session_start INTEGER",
+				"ALTER TABLE accounts ADD COLUMN session_start BIGINT",
 			);
 			log.info("Added session_start column to accounts table");
 		}
@@ -307,7 +337,7 @@ export async function runMigrationsAsync(
 		// Add rate_limit_reset column if it doesn't exist
 		if (!accountsColumns.includes("rate_limit_reset")) {
 			await adapter.exec(
-				"ALTER TABLE accounts ADD COLUMN rate_limit_reset INTEGER",
+				"ALTER TABLE accounts ADD COLUMN rate_limit_reset BIGINT",
 			);
 			log.info("Added rate_limit_reset column to accounts table");
 		}
