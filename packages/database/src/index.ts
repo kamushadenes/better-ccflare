@@ -27,6 +27,11 @@ export type {
 } from "./database-operations";
 export { createAsyncAdapter, DatabaseFactory, getBackendType } from "./factory";
 export { migrateFromCcflare } from "./migrate-from-ccflare";
+export type {
+	MigrationResult,
+	TableMigrationResult,
+} from "./migrate-to-postgres";
+export { migrateToPostgres } from "./migrate-to-postgres";
 export { ensureSchema, runMigrations } from "./migrations";
 export { getLegacyDbPath, resolveDbPath } from "./paths";
 export { analyzeIndexUsage } from "./performance-indexes";
