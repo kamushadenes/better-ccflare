@@ -84,9 +84,14 @@ export async function fetchUsageData(
 			if (response.status === 429) {
 				const err = new Error("Rate limited");
 				(err as Error & { status: number }).status = 429;
-				(err as Error & { retryAfter: number }).retryAfter = retryAfter
+				const parsedRetryAfter = retryAfter
 					? Number.parseInt(retryAfter, 10)
 					: 600;
+				// Minimum 10 minutes backoff regardless of Retry-After header
+				(err as Error & { retryAfter: number }).retryAfter = Math.max(
+					600,
+					parsedRetryAfter,
+				);
 				throw err;
 			}
 			return null;
@@ -95,6 +100,14 @@ export async function fetchUsageData(
 		const data = (await response.json()) as UsageData;
 		return data;
 	} catch (error) {
+		// Re-throw 429 errors so fetchAndCache can apply backoff
+		if (
+			error instanceof Error &&
+			(error as Error & { status?: number }).status === 429
+		) {
+			throw error;
+		}
+
 		// Ensure we have a proper error object for logging
 		const errorMessage =
 			error instanceof Error
