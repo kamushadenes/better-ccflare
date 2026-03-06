@@ -306,13 +306,13 @@ function startUsagePollingWithRefresh(
 				}
 			};
 
-			// Start usage polling with the token provider
+			// Start usage polling with the token provider (5 min interval to avoid 429s from Anthropic)
 			usageCache.startPolling(
 				account.id,
 				tokenProvider,
 				account.provider,
-				30000,
-			); // Poll every 30s
+				300000,
+			);
 
 			// Reset retry count on success
 			retryCount = 0;

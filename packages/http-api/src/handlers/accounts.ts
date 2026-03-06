@@ -98,8 +98,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 		);
 
 		// Fetch usage data in parallel for all OAuth accounts that don't have fresh cache data
-		// Cache is considered stale after 90 seconds (aligned with auto-refresh scheduler polling)
-		const CACHE_FRESHNESS_THRESHOLD_MS = 90000;
+		// Cache is considered stale after 5 minutes (aligned with polling interval to avoid 429s)
+		const CACHE_FRESHNESS_THRESHOLD_MS = 300000;
 		await Promise.all(
 			oauthAccounts.map(async (account) => {
 				// Check if we already have cached data and if it's still fresh
