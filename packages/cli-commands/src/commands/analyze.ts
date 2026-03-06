@@ -1,7 +1,6 @@
-import { DatabaseFactory } from "@better-ccflare/database";
-import type { DatabaseOperations } from "@better-ccflare/database";
 import { TIME_CONSTANTS } from "@better-ccflare/core";
-import { analyzeIndexUsage } from "@better-ccflare/database";
+import type { DatabaseOperations } from "@better-ccflare/database";
+import { analyzeIndexUsage, DatabaseFactory } from "@better-ccflare/database";
 
 /**
  * Analyze query performance and index usage
@@ -72,9 +71,7 @@ export async function analyzePerformance(
 		// Check if statistics need updating
 		console.log("=== Index Optimization Status ===\n");
 
-		const lastAnalyze = db
-			.prepare(`SELECT * FROM sqlite_stat1 LIMIT 1`)
-			.get();
+		const lastAnalyze = db.prepare(`SELECT * FROM sqlite_stat1 LIMIT 1`).get();
 
 		if (!lastAnalyze) {
 			console.log("⚠️  No index statistics found. Running ANALYZE...");

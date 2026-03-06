@@ -1095,7 +1095,9 @@ export async function removeAccount(
 	name: string,
 ): Promise<{ success: boolean; message: string }> {
 	const adapter = dbOps.getAsyncAdapter();
-	const result = await adapter.run("DELETE FROM accounts WHERE name = ?", [name]);
+	const result = await adapter.run("DELETE FROM accounts WHERE name = ?", [
+		name,
+	]);
 
 	if (result.changes === 0) {
 		return {

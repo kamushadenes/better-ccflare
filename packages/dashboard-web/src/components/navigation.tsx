@@ -211,8 +211,16 @@ export function Navigation() {
 				detectPackageManager(),
 			]);
 
+			if (!response.ok) {
+				throw new Error(`Version check failed: ${response.status}`);
+			}
+
 			const data = await response.json();
 			const latest = data.version;
+
+			if (!latest || typeof latest !== "string") {
+				throw new Error("Invalid version in response");
+			}
 
 			// Only update state if component is still mounted
 			if (!isMountedRef.current) return;

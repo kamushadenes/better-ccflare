@@ -117,8 +117,16 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 							log.debug(
 								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
 							);
+						} else {
+							console.error(
+								`[accounts] fetchUsageData returned null for ${account.name} (token present: ${!!account.access_token})`,
+							);
 						}
 					} catch (error) {
+						console.error(
+							`[accounts] Failed to fetch usage for ${account.name}:`,
+							error,
+						);
 						log.warn(
 							`Failed to fetch usage data for account ${account.name}:`,
 							error,

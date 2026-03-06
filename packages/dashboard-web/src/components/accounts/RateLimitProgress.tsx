@@ -186,7 +186,7 @@ export function RateLimitProgress({
 		};
 		if (anthropicData?.five_hour) {
 			usages.push({
-				utilization: anthropicData.five_hour.utilization,
+				utilization: anthropicData.five_hour.utilization ?? 0,
 				window: "five_hour",
 				resetTime: anthropicData.five_hour.resets_at,
 			});
@@ -199,15 +199,10 @@ export function RateLimitProgress({
 			});
 		}
 
-		// Check if seven_day data exists and has valid utilization
-		if (
-			anthropicData &&
-			anthropicData.seven_day &&
-			anthropicData.seven_day.utilization !== null &&
-			anthropicData.seven_day.utilization !== undefined
-		) {
+		// Check if seven_day data exists
+		if (anthropicData?.seven_day) {
 			usages.push({
-				utilization: anthropicData.seven_day.utilization,
+				utilization: anthropicData.seven_day.utilization ?? 0,
 				window: "seven_day",
 				resetTime: anthropicData.seven_day.resets_at,
 			});
@@ -220,31 +215,25 @@ export function RateLimitProgress({
 			});
 		}
 
-		// Check if seven_day_opus data exists, has valid utilization, and resets_at is not null
+		// Check if seven_day_opus data exists and resets_at is not null
 		if (
-			anthropicData &&
-			anthropicData.seven_day_opus &&
-			anthropicData.seven_day_opus.utilization !== null &&
-			anthropicData.seven_day_opus.utilization !== undefined &&
-			anthropicData.seven_day_opus.resets_at !== null
+			anthropicData?.seven_day_opus?.resets_at !== null &&
+			anthropicData?.seven_day_opus
 		) {
 			usages.push({
-				utilization: anthropicData.seven_day_opus.utilization,
+				utilization: anthropicData.seven_day_opus.utilization ?? 0,
 				window: "seven_day_opus",
 				resetTime: anthropicData.seven_day_opus.resets_at,
 			});
 		}
 
-		// Check if seven_day_sonnet data exists, has valid utilization, and resets_at is not null
+		// Check if seven_day_sonnet data exists and resets_at is not null
 		if (
-			anthropicData &&
-			anthropicData.seven_day_sonnet &&
-			anthropicData.seven_day_sonnet.utilization !== null &&
-			anthropicData.seven_day_sonnet.utilization !== undefined &&
-			anthropicData.seven_day_sonnet.resets_at !== null
+			anthropicData?.seven_day_sonnet?.resets_at !== null &&
+			anthropicData?.seven_day_sonnet
 		) {
 			usages.push({
-				utilization: anthropicData.seven_day_sonnet.utilization,
+				utilization: anthropicData.seven_day_sonnet.utilization ?? 0,
 				window: "seven_day_sonnet",
 				resetTime: anthropicData.seven_day_sonnet.resets_at,
 			});

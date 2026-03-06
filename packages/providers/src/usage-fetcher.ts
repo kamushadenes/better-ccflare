@@ -65,32 +65,20 @@ export async function fetchUsageData(
 
 		if (!response.ok) {
 			const errorMessage = response.statusText;
-			const responseHeaders = Object.fromEntries(response.headers.entries());
+			let errorBody = "";
 			try {
-				const errorBody = await response.text();
-				log.error(
-					`Failed to fetch usage data: ${response.status} ${errorMessage}`,
-					{
-						status: response.status,
-						statusText: errorMessage,
-						url: "https://api.anthropic.com/api/oauth/usage",
-						headers: responseHeaders,
-						errorBody: errorBody,
-						timestamp: new Date().toISOString(),
-					},
-				);
+				errorBody = await response.text();
 			} catch {
-				log.error(
-					`Failed to fetch usage data: ${response.status} ${errorMessage}`,
-					{
-						status: response.status,
-						statusText: errorMessage,
-						url: "https://api.anthropic.com/api/oauth/usage",
-						headers: responseHeaders,
-						timestamp: new Date().toISOString(),
-					},
-				);
+				// ignore
 			}
+			// Use console.error directly so it's visible in Cloud Run logs (Logger suppresses output)
+			console.error(
+				`[usage-fetcher] Failed to fetch usage data: ${response.status} ${errorMessage}`,
+				errorBody ? `Body: ${errorBody}` : "",
+			);
+			log.error(
+				`Failed to fetch usage data: ${response.status} ${errorMessage}`,
+			);
 			return null;
 		}
 
@@ -105,6 +93,10 @@ export async function fetchUsageData(
 					? JSON.stringify(error)
 					: String(error);
 
+		// Use console.error directly so it's visible in Cloud Run logs
+		console.error(
+			`[usage-fetcher] Error fetching usage data: ${errorMessage || "Unknown error"}`,
+		);
 		log.error("Error fetching usage data:", errorMessage || "Unknown error");
 		return null;
 	}
