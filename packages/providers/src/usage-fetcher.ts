@@ -65,6 +65,7 @@ export async function fetchUsageData(
 
 		if (!response.ok) {
 			const errorMessage = response.statusText;
+			const retryAfter = response.headers.get("retry-after");
 			let errorBody = "";
 			try {
 				errorBody = await response.text();
@@ -74,11 +75,20 @@ export async function fetchUsageData(
 			// Use console.error directly so it's visible in Cloud Run logs (Logger suppresses output)
 			console.error(
 				`[usage-fetcher] Failed to fetch usage data: ${response.status} ${errorMessage}`,
+				retryAfter ? `Retry-After: ${retryAfter}s` : "",
 				errorBody ? `Body: ${errorBody}` : "",
 			);
 			log.error(
 				`Failed to fetch usage data: ${response.status} ${errorMessage}`,
 			);
+			if (response.status === 429) {
+				const err = new Error("Rate limited");
+				(err as Error & { status: number }).status = 429;
+				(err as Error & { retryAfter: number }).retryAfter = retryAfter
+					? Number.parseInt(retryAfter, 10)
+					: 600;
+				throw err;
+			}
 			return null;
 		}
 
@@ -198,6 +208,7 @@ class UsageCache {
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
 	private startupDelay = 0; // Stagger initial fetches to avoid 429s
+	private backoffUntil = new Map<string, number>(); // Per-account backoff after 429s
 
 	/**
 	 * Start polling for an account's usage data
@@ -311,6 +322,15 @@ class UsageCache {
 		provider?: string,
 		customEndpoint?: string | null,
 	): Promise<boolean> {
+		// Check if this account is in backoff (429 cooldown)
+		const backoff = this.backoffUntil.get(accountId);
+		if (backoff && Date.now() < backoff) {
+			log.debug(
+				`Skipping usage fetch for ${accountId} — in backoff until ${new Date(backoff).toISOString()}`,
+			);
+			return false;
+		}
+
 		try {
 			// Get a fresh access token or API key on each fetch
 			let token: string;
@@ -414,6 +434,21 @@ class UsageCache {
 
 			return false;
 		} catch (error) {
+			// Handle 429 rate limit with backoff
+			if (
+				error instanceof Error &&
+				(error as Error & { status?: number }).status === 429
+			) {
+				const retryAfter =
+					(error as Error & { retryAfter?: number }).retryAfter ?? 600;
+				const backoffMs = retryAfter * 1000;
+				this.backoffUntil.set(accountId, Date.now() + backoffMs);
+				console.error(
+					`[usage-fetcher] Account ${accountId} rate limited, backing off for ${retryAfter}s`,
+				);
+				return false;
+			}
+
 			// Ensure we have a proper error object for logging
 			const errorMessage =
 				error instanceof Error
