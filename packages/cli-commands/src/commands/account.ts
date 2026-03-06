@@ -82,7 +82,7 @@ async function createConsoleAccountWithApiKey(
 	const validatedApiKey = validateApiKey(apiKey, "Claude API key");
 	const validatedPriority = validatePriority(priority, "priority");
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -118,7 +118,7 @@ async function createMinimaxAccount(
 	const validatedApiKey = validateApiKey(apiKey, "Minimax API key");
 	const validatedPriority = validatePriority(priority, "priority");
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -162,7 +162,7 @@ export async function createNanoGPTAccount(
 		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validatedMappings);
 	}
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -204,7 +204,7 @@ async function createKiloAccount(
 		const validated = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validated);
 	}
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -246,7 +246,7 @@ async function createOpenRouterAccount(
 		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validatedMappings);
 	}
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -303,7 +303,7 @@ async function createAnthropicCompatibleAccount(
 		validatedModelMappings = JSON.stringify(validatedMappings);
 	}
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -337,7 +337,7 @@ async function createZaiAccount(
 	const validatedApiKey = validateApiKey(apiKey, "z.ai API key");
 	const validatedPriority = validatePriority(priority, "priority");
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -413,7 +413,7 @@ async function createBedrockAccount(
 	// Store as "bedrock:profile:region" format
 	const customEndpoint = `bedrock:${profile}:${region}`;
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, cross_region_mode
@@ -464,7 +464,7 @@ async function createVertexAIAccount(
 		region: region.trim(),
 	});
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
@@ -578,7 +578,7 @@ async function createOpenAIAccount(
 		? JSON.stringify(validatedModelMappings)
 		: null;
 
-	dbOps.getDatabase().run(
+	await dbOps.getAsyncAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
 			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
@@ -1094,8 +1094,8 @@ export async function removeAccount(
 	dbOps: DatabaseOperations,
 	name: string,
 ): Promise<{ success: boolean; message: string }> {
-	const db = dbOps.getDatabase();
-	const result = db.run("DELETE FROM accounts WHERE name = ?", [name]);
+	const adapter = dbOps.getAsyncAdapter();
+	const result = await adapter.run("DELETE FROM accounts WHERE name = ?", [name]);
 
 	if (result.changes === 0) {
 		return {
@@ -1151,14 +1151,13 @@ async function toggleAccountPause(
 	name: string,
 	shouldPause: boolean,
 ): Promise<{ success: boolean; message: string }> {
-	const db = dbOps.getDatabase();
+	const adapter = dbOps.getAsyncAdapter();
 
 	// Get account ID by name
-	const account = db
-		.query<{ id: string; paused: 0 | 1 }, [string]>(
-			"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
-		)
-		.get(name);
+	const account = await adapter.get<{ id: string; paused: 0 | 1 | boolean }>(
+		"SELECT id, COALESCE(paused, 0) as paused FROM accounts WHERE name = ?",
+		[name],
+	);
 
 	if (!account) {
 		return {
@@ -1167,7 +1166,7 @@ async function toggleAccountPause(
 		};
 	}
 
-	const isPaused = account.paused === 1;
+	const isPaused = !!account.paused;
 	const _action = shouldPause ? "pause" : "resume";
 	const actionPast = shouldPause ? "paused" : "resumed";
 
@@ -1218,12 +1217,13 @@ export async function setAccountPriority(
 	name: string,
 	priority: number,
 ): Promise<{ success: boolean; message: string }> {
-	const db = dbOps.getDatabase();
+	const adapter = dbOps.getAsyncAdapter();
 
 	// Get account ID by name
-	const account = db
-		.query<{ id: string }, [string]>("SELECT id FROM accounts WHERE name = ?")
-		.get(name);
+	const account = await adapter.get<{ id: string }>(
+		"SELECT id FROM accounts WHERE name = ?",
+		[name],
+	);
 
 	if (!account) {
 		return {
@@ -1236,7 +1236,7 @@ export async function setAccountPriority(
 	const validatedPriority = validatePriority(priority, "priority");
 
 	// Update the account priority
-	db.run("UPDATE accounts SET priority = ? WHERE id = ?", [
+	await adapter.run("UPDATE accounts SET priority = ? WHERE id = ?", [
 		validatedPriority,
 		account.id,
 	]);
@@ -1257,12 +1257,11 @@ export async function forceResetRateLimit(
 	name: string,
 	config: Config,
 ): Promise<{ success: boolean; message: string }> {
-	const db = dbOps.getDatabase();
-	const account = db
-		.query<{ id: string; name: string }, [string]>(
-			"SELECT id, name FROM accounts WHERE name = ?",
-		)
-		.get(name);
+	const adapter = dbOps.getAsyncAdapter();
+	const account = await adapter.get<{ id: string; name: string }>(
+		"SELECT id, name FROM accounts WHERE name = ?",
+		[name],
+	);
 
 	if (!account) {
 		return {
@@ -1351,23 +1350,19 @@ export async function reauthenticateAccount(
 	config: Config,
 	name: string,
 ): Promise<{ success: boolean; message: string }> {
-	const db = dbOps.getDatabase();
+	const adapter = dbOps.getAsyncAdapter();
 
 	// Get account by name
-	const account = db
-		.query<
-			{
-				id: string;
-				provider: string;
-				priority: number;
-				custom_endpoint: string | null;
-				api_key: string | null;
-			},
-			[string]
-		>(
-			"SELECT id, provider, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
-		)
-		.get(name);
+	const account = await adapter.get<{
+		id: string;
+		provider: string;
+		priority: number;
+		custom_endpoint: string | null;
+		api_key: string | null;
+	}>(
+		"SELECT id, provider, priority, custom_endpoint, api_key FROM accounts WHERE name = ?",
+		[name],
+	);
 
 	if (!account) {
 		return {
@@ -1488,7 +1483,7 @@ export async function reauthenticateAccount(
 			// Update existing account with new API key (preserving all other metadata)
 			// Use transaction for atomic update
 			try {
-				db.run(
+				await adapter.run(
 					`UPDATE accounts SET
 						api_key = ?,
 						refresh_token = ?,
@@ -1518,7 +1513,7 @@ export async function reauthenticateAccount(
 	console.log("Updating OAuth tokens...");
 
 	try {
-		db.run(
+		await adapter.run(
 			`UPDATE accounts SET
 				refresh_token = ?,
 				access_token = ?,

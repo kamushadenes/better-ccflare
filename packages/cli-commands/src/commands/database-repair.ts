@@ -1,4 +1,5 @@
 import type { DatabaseOperations } from "@better-ccflare/database";
+import { DatabaseFactory } from "@better-ccflare/database";
 
 interface RepairResult {
 	integrityOk: boolean;
@@ -19,6 +20,13 @@ export function repairDatabase(dbOps: DatabaseOperations): RepairResult {
 		errors: [],
 		warnings: [],
 	};
+
+	if (DatabaseFactory.getBackendType() !== "sqlite") {
+		console.log("Database repair is only available for SQLite backend.");
+		console.log("PostgreSQL handles integrity and optimization automatically.");
+		result.integrityOk = true;
+		return result;
+	}
 
 	const db = dbOps.getDatabase();
 

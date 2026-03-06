@@ -1124,13 +1124,13 @@ Examples:
 	}
 
 	if (parsed.resetStats) {
-		resetAllStats(dbOps.getDatabase());
+		await resetAllStats(dbOps);
 		console.log("✅ Statistics reset successfully");
 		await exitGracefully(0);
 	}
 
 	if (parsed.clearHistory) {
-		const result = clearRequestHistory(dbOps.getDatabase());
+		const result = await clearRequestHistory(dbOps);
 		console.log(
 			`✅ Request history cleared successfully (${result.count} records removed)`,
 		);
@@ -1249,7 +1249,7 @@ Examples:
 	}
 
 	if (parsed.analyze) {
-		analyzePerformance(dbOps.getDatabase());
+		await analyzePerformance(dbOps);
 		await exitGracefully(0);
 	}
 

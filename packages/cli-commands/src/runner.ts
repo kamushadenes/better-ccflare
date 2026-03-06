@@ -168,15 +168,13 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "reset-stats": {
-				const db = dbOps.getDatabase();
-				resetAllStats(db);
+				await resetAllStats(dbOps);
 				console.log("Account statistics reset successfully");
 				break;
 			}
 
 			case "clear-history": {
-				const db = dbOps.getDatabase();
-				const result = clearRequestHistory(db);
+				const result = await clearRequestHistory(dbOps);
 				console.log(`Cleared ${result.count} request records`);
 				break;
 			}
@@ -244,8 +242,7 @@ export async function runCli(argv: string[]): Promise<void> {
 			}
 
 			case "analyze": {
-				const db = dbOps.getDatabase();
-				analyzePerformance(db);
+				await analyzePerformance(dbOps);
 				break;
 			}
 
