@@ -97,44 +97,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 				acc.refresh_token !== acc.access_token, // Exclude API key accounts where they're the same
 		);
 
-		// Fetch usage data in parallel for all OAuth accounts that don't have fresh cache data
-		// Cache is considered stale after 5 minutes (aligned with polling interval to avoid 429s)
-		const CACHE_FRESHNESS_THRESHOLD_MS = 300000;
-		await Promise.all(
-			oauthAccounts.map(async (account) => {
-				// Check if we already have cached data and if it's still fresh
-				const cacheAge = usageCache.getAge(account.id);
-				const isCacheFresh =
-					cacheAge !== null && cacheAge < CACHE_FRESHNESS_THRESHOLD_MS;
-
-				if (!isCacheFresh && account.access_token) {
-					// Fetch usage data if cache is stale or missing
-					try {
-						const usageData = await fetchUsageData(account.access_token);
-						if (usageData) {
-							// Update the cache using the public set method
-							usageCache.set(account.id, usageData);
-							log.debug(
-								`Fetched usage data for ${account.name}: 5h=${usageData.five_hour.utilization}%, 7d=${usageData.seven_day.utilization}%`,
-							);
-						} else {
-							console.error(
-								`[accounts] fetchUsageData returned null for ${account.name} (token present: ${!!account.access_token})`,
-							);
-						}
-					} catch (error) {
-						console.error(
-							`[accounts] Failed to fetch usage for ${account.name}:`,
-							error,
-						);
-						log.warn(
-							`Failed to fetch usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			}),
-		);
+		// Usage data is fetched by the background polling (usageCache.startPolling in server.ts).
+		// The accounts handler only reads from the cache to avoid 429s from Anthropic.
 
 		const response: AccountResponse[] = accounts.map((account) => {
 			let rateLimitStatus = "OK";

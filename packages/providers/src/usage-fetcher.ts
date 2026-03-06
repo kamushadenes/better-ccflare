@@ -197,6 +197,7 @@ class UsageCache {
 	private tokenProviders = new Map<string, AccessTokenProvider>();
 	private providerTypes = new Map<string, string>(); // Track provider type for each account
 	private customEndpoints = new Map<string, string | null>(); // Track custom endpoints
+	private startupDelay = 0; // Stagger initial fetches to avoid 429s
 
 	/**
 	 * Start polling for an account's usage data
@@ -240,8 +241,14 @@ class UsageCache {
 			this.customEndpoints.set(accountId, customEndpoint);
 		}
 
-		// Immediate fetch
-		this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint);
+		// Stagger initial fetches (10s apart) to avoid 429s from Anthropic
+		const delay = this.startupDelay;
+		this.startupDelay += 10000;
+		setTimeout(
+			() =>
+				this.fetchAndCache(accountId, tokenProvider, provider, customEndpoint),
+			delay,
+		);
 
 		// Default to 90 seconds ± 5 seconds with randomization if not provided
 		const pollingInterval = intervalMs ?? 90000 + Math.random() * 10000;
