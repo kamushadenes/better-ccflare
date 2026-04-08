@@ -85,7 +85,8 @@ export function AccountsTab() {
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
-			| "alibaba-coding-plan";
+			| "alibaba-coding-plan"
+			| "codex";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -155,6 +156,7 @@ export function AccountsTab() {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}) => {
 		try {
 			await api.addZaiAccount(params);
@@ -355,6 +357,18 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleRefreshUsage = async (account: Account) => {
+		try {
+			await api.refreshUsage(account.id);
+			// Wait briefly then reload so fresh usage data has time to arrive
+			await new Promise((resolve) => setTimeout(resolve, 5000));
+			await loadAccounts();
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handlePriorityChange = (account: Account) => {
 		setPriorityDialog({ isOpen: true, account });
 	};
@@ -416,7 +430,7 @@ export function AccountsTab() {
 
 	const handleUpdateModelMappings = async (
 		accountId: string,
-		modelMappings: { [key: string]: string },
+		modelMappings: { [key: string]: string | string[] },
 	) => {
 		try {
 			await api.updateAccountModelMappings(accountId, modelMappings);
@@ -499,6 +513,7 @@ export function AccountsTab() {
 						accounts={accounts}
 						onPauseToggle={handlePauseToggle}
 						onForceResetRateLimit={handleForceResetRateLimit}
+						onRefreshUsage={handleRefreshUsage}
 						onRemove={handleRemoveAccount}
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}

@@ -6,9 +6,11 @@ import {
 	createAccountAutoRefreshHandler,
 	createAccountCustomEndpointUpdateHandler,
 	createAccountForceResetRateLimitHandler,
+	createAccountModelFallbacksUpdateHandler,
 	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
 	createAccountPriorityUpdateHandler,
+	createAccountRefreshUsageHandler,
 	createAccountReloadHandler,
 	createAccountRemoveHandler,
 	createAccountRenameHandler,
@@ -44,6 +46,11 @@ import {
 	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
 import { createConfigHandlers } from "./handlers/config";
+import {
+	createHeapSnapshotHandler,
+	createHeapStatsHandler,
+	createRssHandler,
+} from "./handlers/debug";
 import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
@@ -132,6 +139,11 @@ export class APIRouter {
 		const compactHandler = createCompactHandler(dbOps);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
+
+		// Debug/profiling handlers
+		const heapStatsHandler = createHeapStatsHandler();
+		const heapSnapshotHandler = createHeapSnapshotHandler();
+		const rssHandler = createRssHandler();
 
 		// API Key handlers
 		const apiKeysListHandler = createApiKeysListHandler(dbOps);
@@ -253,6 +265,11 @@ export class APIRouter {
 		});
 		this.handlers.set("GET:/api/workspaces", () => workspacesHandler());
 
+		// Debug/profiling routes
+		this.handlers.set("GET:/api/debug/heap", () => heapStatsHandler());
+		this.handlers.set("GET:/api/debug/snapshot", () => heapSnapshotHandler());
+		this.handlers.set("GET:/api/debug/rss", () => rssHandler());
+
 		// API Key routes
 		this.handlers.set("GET:/api/api-keys", () => apiKeysListHandler());
 		this.handlers.set("POST:/api/api-keys", (req) =>
@@ -361,6 +378,16 @@ export class APIRouter {
 				);
 			}
 
+			// Account refresh usage - force restart usage polling and token refresh
+			if (path.endsWith("/refresh-usage") && method === "POST") {
+				const refreshUsageHandler = createAccountRefreshUsageHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					refreshUsageHandler(req, accountId),
+				)(req, url);
+			}
+
 			// Account force-reset rate limit
 			if (path.endsWith("/force-reset-rate-limit") && method === "POST") {
 				const forceResetRateLimitHandler =
@@ -426,6 +453,16 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					modelMappingsHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account model fallbacks update
+			if (path.endsWith("/model-fallbacks") && method === "POST") {
+				const modelFallbacksHandler = createAccountModelFallbacksUpdateHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					modelFallbacksHandler(req, accountId),
 				)(req, url);
 			}
 

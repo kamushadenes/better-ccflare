@@ -17,7 +17,10 @@ import type {
 import { API_LIMITS, API_TIMEOUT } from "./constants";
 
 // Re-export types with dashboard-specific aliases for backward compatibility
-export type Account = AccountResponse;
+export type Account = AccountResponse & {
+	/** @deprecated Fallbacks are now merged into modelMappings as arrays */
+	modelFallbacks?: { [key: string]: string } | null;
+};
 export type Stats = StatsWithAccounts;
 export type LogEntry = LogEvent;
 export type RequestSummary = RequestResponse;
@@ -99,24 +102,24 @@ class API extends HttpClient {
 	}
 
 	/**
-	 * Store API key in sessionStorage (cleared when tab closes)
+	 * Store API key in localStorage (persists until manually cleared)
 	 */
 	setApiKey(apiKey: string): void {
-		sessionStorage.setItem(API.API_KEY_STORAGE_KEY, apiKey);
+		localStorage.setItem(API.API_KEY_STORAGE_KEY, apiKey);
 	}
 
 	/**
-	 * Retrieve API key from sessionStorage
+	 * Retrieve API key from localStorage
 	 */
 	getApiKey(): string | null {
-		return sessionStorage.getItem(API.API_KEY_STORAGE_KEY);
+		return localStorage.getItem(API.API_KEY_STORAGE_KEY);
 	}
 
 	/**
 	 * Clear stored API key
 	 */
 	clearApiKey(): void {
-		sessionStorage.removeItem(API.API_KEY_STORAGE_KEY);
+		localStorage.removeItem(API.API_KEY_STORAGE_KEY);
 	}
 
 	/**
@@ -215,7 +218,8 @@ class API extends HttpClient {
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
-			| "alibaba-coding-plan";
+			| "alibaba-coding-plan"
+			| "codex";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
@@ -281,6 +285,7 @@ class API extends HttpClient {
 		apiKey: string;
 		priority: number;
 		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
 	}): Promise<{ message: string; account: Account }> {
 		const startTime = Date.now();
 		const url = "/api/accounts/zai";
@@ -943,6 +948,35 @@ class API extends HttpClient {
 		}
 	}
 
+	async refreshUsage(accountId: string): Promise<{
+		success: boolean;
+		message: string;
+		pollingRestarted: boolean;
+	}> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/refresh-usage`;
+
+		this.logger.debug(`→ POST ${url}`);
+
+		try {
+			const response = await this.post<{
+				success: boolean;
+				message: string;
+				pollingRestarted: boolean;
+			}>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
 	async renameAccount(
 		accountId: string,
 		newName: string,
@@ -1086,7 +1120,7 @@ class API extends HttpClient {
 
 	async updateAccountModelMappings(
 		accountId: string,
-		modelMappings: { [key: string]: string },
+		modelMappings: { [key: string]: string | string[] },
 	): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${accountId}/model-mappings`;
@@ -1096,6 +1130,34 @@ class API extends HttpClient {
 		try {
 			await this.post(url, {
 				modelMappings,
+			});
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async updateAccountModelFallbacks(
+		accountId: string,
+		modelFallbacks: { [key: string]: string },
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/model-fallbacks`;
+
+		this.logger.debug(`→ POST ${url}`, { modelFallbacks });
+
+		try {
+			await this.post(url, {
+				modelFallbacks,
 			});
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
@@ -1326,7 +1388,11 @@ class API extends HttpClient {
 	}
 
 	// Retention settings
-	async getRetention(): Promise<{ payloadDays: number; requestDays: number }> {
+	async getRetention(): Promise<{
+		payloadDays: number;
+		requestDays: number;
+		storePayloads: boolean;
+	}> {
 		const startTime = Date.now();
 		const url = "/api/config/retention";
 
@@ -1336,6 +1402,7 @@ class API extends HttpClient {
 			const response = await this.get<{
 				payloadDays: number;
 				requestDays: number;
+				storePayloads: boolean;
 			}>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
@@ -1353,6 +1420,7 @@ class API extends HttpClient {
 	async setRetention(partial: {
 		payloadDays?: number;
 		requestDays?: number;
+		storePayloads?: boolean;
 	}): Promise<void> {
 		const startTime = Date.now();
 		const url = "/api/config/retention";

@@ -48,7 +48,8 @@ export function ensureSchema(db: Database): void {
 			cache_read_input_tokens INTEGER DEFAULT 0,
 			cache_creation_input_tokens INTEGER DEFAULT 0,
 			output_tokens INTEGER DEFAULT 0,
-			agent_used TEXT
+			agent_used TEXT,
+			project TEXT
 		)
 	`);
 
@@ -72,9 +73,23 @@ export function ensureSchema(db: Database): void {
 		CREATE TABLE IF NOT EXISTS request_payloads (
 			id TEXT PRIMARY KEY,
 			json TEXT NOT NULL,
+			timestamp INTEGER,
 			FOREIGN KEY (id) REFERENCES requests(id) ON DELETE CASCADE
 		)
 	`);
+
+	// Index for efficient age-based payload cleanup — only if column exists
+	// (may not exist if table was inherited from a legacy ccflare database)
+	const payloadCols = (
+		db.prepare("PRAGMA table_info(request_payloads)").all() as Array<{
+			name: string;
+		}>
+	).map((c) => c.name);
+	if (payloadCols.includes("timestamp")) {
+		db.run(
+			`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+		);
+	}
 
 	// Create oauth_sessions table for secure PKCE verifier storage
 	db.run(`
@@ -349,6 +364,12 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added cross_region_mode column to accounts table");
 		}
 
+		// Add model_fallbacks column for automatic model fallback on unavailable models
+		if (!initialAccountsColumnNames.includes("model_fallbacks")) {
+			db.prepare("ALTER TABLE accounts ADD COLUMN model_fallbacks TEXT").run();
+			log.info("Added model_fallbacks column to accounts table");
+		}
+
 		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)
 		const refreshTokenCol = accountsInfo.find(
 			(col) => col.name === "refresh_token",
@@ -380,7 +401,8 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					custom_endpoint TEXT,
 					auto_refresh_enabled INTEGER DEFAULT 0,
 					model_mappings TEXT,
-					cross_region_mode TEXT DEFAULT 'geographic'
+					cross_region_mode TEXT DEFAULT 'geographic',
+				model_fallbacks TEXT
 				)
 			`).run();
 
@@ -395,7 +417,7 @@ export function runMigrations(db: Database, dbPath?: string): void {
 					rate_limited_until, session_start, session_request_count,
 					paused, rate_limit_reset, rate_limit_status, rate_limit_remaining,
 					auto_fallback_enabled, custom_endpoint, auto_refresh_enabled,
-					model_mappings, cross_region_mode
+					model_mappings, cross_region_mode, model_fallbacks
 				FROM accounts
 			`).run();
 
@@ -567,6 +589,48 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		if (!requestsColumnNames.includes("api_key_name")) {
 			db.prepare("ALTER TABLE requests ADD COLUMN api_key_name TEXT").run();
 			log.info("Added api_key_name column to requests table");
+		}
+
+		// Add project column if it doesn't exist
+		if (!requestsColumnNames.includes("project")) {
+			db.prepare("ALTER TABLE requests ADD COLUMN project TEXT").run();
+			log.info("Added project column to requests table");
+		}
+
+		// Add timestamp column to request_payloads if it doesn't exist
+		const requestPayloadsInfo = db
+			.prepare("PRAGMA table_info(request_payloads)")
+			.all() as Array<{
+			cid: number;
+			name: string;
+			type: string;
+			notnull: number;
+			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
+			dflt_value: any;
+			pk: number;
+		}>;
+
+		const requestPayloadsColumnNames = requestPayloadsInfo.map(
+			(col) => col.name,
+		);
+
+		if (!requestPayloadsColumnNames.includes("timestamp")) {
+			db.prepare(
+				"ALTER TABLE request_payloads ADD COLUMN timestamp INTEGER",
+			).run();
+			// Backfill timestamps from the requests table for existing rows
+			db.prepare(`
+				UPDATE request_payloads
+				SET timestamp = (SELECT timestamp FROM requests WHERE requests.id = request_payloads.id)
+				WHERE timestamp IS NULL
+			`).run();
+			// Create index for efficient age-based cleanup
+			db.prepare(
+				`CREATE INDEX IF NOT EXISTS idx_request_payloads_timestamp ON request_payloads(timestamp)`,
+			).run();
+			log.info(
+				"Added timestamp column to request_payloads table and backfilled from requests",
+			);
 		}
 
 		// Check columns in api_keys table

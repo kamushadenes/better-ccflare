@@ -5,7 +5,7 @@ import type {
 import { jsonResponse } from "@better-ccflare/http-common";
 import type { RequestResponse } from "../types";
 
-const MAX_BODY_PREVIEW_BYTES = 32 * 1024; // 32KB preview to keep responses lightweight
+const MAX_BODY_PREVIEW_BYTES = 256 * 1024; // 256KB - match response body cap to preserve full conversation history
 const MAX_REQUEST_DETAILS_LIMIT = 50;
 
 function truncateBase64(body: unknown): {
@@ -169,8 +169,8 @@ export function createRequestsDetailHandler(dbOps: DatabaseOperations) {
  * This endpoint supports the performance optimization that eliminates JSON parsing bottleneck
  */
 export function createRequestPayloadHandler(dbOps: DatabaseOperations) {
-	return (requestId: string): Response => {
-		const payload = dbOps.getRequestPayload(requestId);
+	return async (requestId: string): Promise<Response> => {
+		const payload = await dbOps.getRequestPayload(requestId);
 
 		if (!payload) {
 			return new Response(JSON.stringify({ error: "Request not found" }), {

@@ -16,7 +16,11 @@ import {
 } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
+import {
+	AsyncDbWriter,
+	DatabaseFactory,
+	initPayloadEncryption,
+} from "@better-ccflare/database";
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
 import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
@@ -32,7 +36,9 @@ import {
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
+	registerPollingRestarter,
 	registerRefreshClearer,
+	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
@@ -166,6 +172,7 @@ let stopRetentionJob: (() => void) | null = null;
 let stopOAuthCleanupJob: (() => void) | null = null;
 let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
+let stopWalCheckpointJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
@@ -502,6 +509,13 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
 
+	// Initialize payload encryption (no-op if PAYLOAD_ENCRYPTION_KEY is unset).
+	// This must run before any database operations that read/write payloads.
+	// NOTE: this only initializes the main thread; the post-processor worker
+	// runs `initPayloadEncryption()` itself at module load — Bun workers have
+	// isolated module scopes.
+	await initPayloadEncryption();
+
 	// Initialize components
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);
 	const runtime = config.getRuntime();
@@ -614,9 +628,10 @@ export default async function startServer(options?: {
 		}
 	};
 
-	// Run immediately at startup (closes the 6-hour first-run gap if earlyoom
-	// kills the server before the first interval fires), then every 6 hours
-	void dataRetentionCleanup();
+	// Periodic data retention cleanup every 6 hours.
+	// runStartupMaintenance() (called above) handles the initial cleanup on boot,
+	// so we don't fire dataRetentionCleanup() immediately to avoid concurrent
+	// large deletes that can spike WAL size and wedge the service.
 	const unregisterDataCleanup = registerCleanup({
 		id: "data-retention-cleanup",
 		callback: dataRetentionCleanup,
@@ -625,6 +640,21 @@ export default async function startServer(options?: {
 	});
 
 	stopDataCleanupJob = unregisterDataCleanup;
+
+	// Set up periodic WAL checkpoint every 5 minutes to prevent unbounded WAL growth
+	const unregisterWalCheckpoint = registerCleanup({
+		id: "wal-checkpoint",
+		callback: () => {
+			try {
+				dbOps.optimize(); // runs PRAGMA optimize + PRAGMA wal_checkpoint(PASSIVE)
+			} catch (err) {
+				log.error(`WAL checkpoint error: ${err}`);
+			}
+		},
+		minutes: 5,
+		description: "WAL checkpoint to prevent unbounded WAL file growth",
+	});
+	stopWalCheckpointJob = unregisterWalCheckpoint;
 
 	// Initialize load balancing strategy (will be created after runtime config)
 
@@ -657,6 +687,8 @@ export default async function startServer(options?: {
 	strategy.initialize(dbOps);
 
 	// Proxy context
+	const usageWorker = getUsageWorker();
+	sendWorkerConfigUpdate(config.getStorePayloads());
 	const proxyContext: ProxyContext = {
 		strategy,
 		dbOps,
@@ -664,7 +696,7 @@ export default async function startServer(options?: {
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
-		usageWorker: getUsageWorker(),
+		usageWorker,
 	};
 
 	// Register this server's refresh clearing capability
@@ -673,6 +705,35 @@ export default async function startServer(options?: {
 		// Clear refresh cache for this account in this server's context
 		proxyContext.refreshInFlight.delete(accountId);
 		log.info(`Cleared refresh cache for account ${accountId} on ${serverId}`);
+	});
+
+	// Register this server's usage polling restart capability
+	registerPollingRestarter(serverId, async (accountId: string) => {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) {
+			log.warn(
+				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
+			);
+			return false;
+		}
+		if (account.provider !== "anthropic") {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+			);
+			return false;
+		}
+		if (!account.access_token && !account.refresh_token) {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} has no tokens`,
+			);
+			return false;
+		}
+		log.info(
+			`Restarting usage polling for account ${account.name} on ${serverId}`,
+		);
+		usageCache.stopPolling(accountId);
+		startUsagePollingWithRefresh(account, proxyContext);
+		return true;
 	});
 
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
@@ -693,6 +754,9 @@ export default async function startServer(options?: {
 				strategy.initialize(dbOps);
 				proxyContext.strategy = strategy;
 			}
+		}
+		if (fieldName === "store_payloads") {
+			sendWorkerConfigUpdate(config.getStorePayloads());
 		}
 	});
 
@@ -1156,6 +1220,10 @@ async function handleGracefulShutdown(signal: string) {
 		if (stopDataCleanupJob) {
 			stopDataCleanupJob();
 			stopDataCleanupJob = null;
+		}
+		if (stopWalCheckpointJob) {
+			stopWalCheckpointJob();
+			stopWalCheckpointJob = null;
 		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();

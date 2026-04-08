@@ -1,4 +1,4 @@
-import { logError, ProviderError } from "@better-ccflare/core";
+import { getModelList, logError, ProviderError } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import { getProvider } from "@better-ccflare/providers";
 import type { Account, RequestMeta } from "@better-ccflare/types";
@@ -207,6 +207,64 @@ async function isInvalidThinkingSignatureError(
 }
 
 /**
+ * Checks if a response error indicates the requested model is unavailable.
+ * Covers Anthropic (not_found_error), OpenAI-compat (model_not_found),
+ * generic messages, and Bedrock (ResourceNotFoundException).
+ */
+async function isModelUnavailableError(response: Response): Promise<boolean> {
+	if (
+		response.status !== 404 &&
+		response.status !== 400 &&
+		response.status !== 429
+	)
+		return false;
+
+	try {
+		const clone = response.clone();
+		const contentType = response.headers.get("content-type");
+		if (!contentType?.includes("application/json")) return false;
+
+		const json = await clone.json();
+
+		// Anthropic native format
+		if (json.error?.type === "not_found_error") return true;
+
+		// OpenAI-compat format
+		if (json.error?.code === "model_not_found") return true;
+
+		// Generic: message contains "model not found" or "does not exist"
+		if (
+			json.error?.message &&
+			typeof json.error.message === "string" &&
+			(json.error.message.toLowerCase().includes("model not found") ||
+				json.error.message.toLowerCase().includes("does not exist"))
+		) {
+			return true;
+		}
+
+		// Bedrock: ResourceNotFoundException
+		if (
+			json.error?.message &&
+			typeof json.error.message === "string" &&
+			json.error.message.includes("ResourceNotFoundException")
+		) {
+			return true;
+		}
+
+		// 429: model-specific rate limit (e.g. OpenRouter free model RPM cap).
+		// Try the fallback model — if no fallback family matches, the caller falls through
+		// and returns the 429 as-is. Single retry only, no loop risk.
+		if (response.status === 429) {
+			return true;
+		}
+	} catch {
+		// Ignore parse errors
+	}
+
+	return false;
+}
+
+/**
  * Handles proxy request without authentication
  * @param req - The incoming request
  * @param url - The parsed URL
@@ -393,8 +451,118 @@ export async function proxyWithAccount(
 			}
 		}
 
+		// On model unavailable / rate-limited: cycle through the model list for
+		// this account. getModelList returns [primary, ...fallbacks] merged from
+		// model_mappings arrays and legacy model_fallbacks. We already tried index 0
+		// (the primary), so start at index 1.
+		if (await isModelUnavailableError(rawResponse)) {
+			let requestedModel: string | null = null;
+			if (requestBodyBuffer) {
+				try {
+					const bodyText = new TextDecoder().decode(requestBodyBuffer);
+					requestedModel = JSON.parse(bodyText).model ?? null;
+				} catch {
+					// ignore
+				}
+			}
+
+			if (requestedModel) {
+				const modelList = getModelList(requestedModel, account);
+
+				for (let i = 1; i < modelList.length; i++) {
+					const nextModel = modelList[i];
+					log.info(
+						`Model '${modelList[i - 1]}' unavailable/rate-limited on account ${account.name}, ` +
+							`retrying with: ${nextModel} (${i}/${modelList.length - 1})`,
+					);
+
+					// Patch the original request body with the next model name, then let
+					// transformRequestBody handle format conversion (e.g. Anthropic→OpenAI).
+					// After that, re-patch the model name because transformRequestBody calls
+					// mapModelName internally which remaps non-Claude names back to the primary
+					// model (no family match → sonnet fallback). We always want nextModel to
+					// reach the upstream provider verbatim.
+					let patchedBody: ArrayBuffer | null = null;
+					try {
+						const bodyText = new TextDecoder().decode(requestBodyBuffer!);
+						const body = JSON.parse(bodyText);
+						body.model = nextModel;
+						patchedBody = new TextEncoder().encode(JSON.stringify(body)).buffer;
+					} catch {
+						log.warn("Failed to patch request body for model retry");
+						break;
+					}
+
+					const retryRequestInit: RequestInit & { duplex?: "half" } = {
+						method: req.method,
+						headers,
+						body: new Uint8Array(patchedBody),
+						duplex: "half",
+					};
+
+					const retryProviderRequest = new Request(targetUrl, retryRequestInit);
+					let retryTransformedRequest = provider.transformRequestBody
+						? await provider.transformRequestBody(retryProviderRequest, account)
+						: retryProviderRequest;
+
+					// Re-patch model after transformRequestBody — the provider's conversion
+					// (e.g. convertAnthropicRequestToOpenAI) calls mapModelName which can
+					// remap nextModel back to the primary model if it has no Claude family
+					// pattern. Force nextModel into the final request body.
+					try {
+						const transformedText = await retryTransformedRequest
+							.clone()
+							.text();
+						const transformedBody = JSON.parse(transformedText);
+						if (transformedBody.model !== nextModel) {
+							transformedBody.model = nextModel;
+							const repatchedHeaders = new Headers(
+								retryTransformedRequest.headers,
+							);
+							retryTransformedRequest = new Request(
+								retryTransformedRequest.url,
+								{
+									method: retryTransformedRequest.method,
+									headers: repatchedHeaders,
+									body: JSON.stringify(transformedBody),
+								},
+							);
+						}
+					} catch {
+						// If re-patching fails, proceed with the transformed request as-is
+					}
+
+					rawResponse = isSyntheticProviderResponse(retryTransformedRequest)
+						? materializeSyntheticResponse(retryTransformedRequest)
+						: await makeProxyRequest(retryTransformedRequest);
+
+					if (!(await isModelUnavailableError(rawResponse.clone()))) {
+						break; // Success — stop cycling
+					}
+				}
+			}
+
+			// If still unavailable/rate-limited after exhausting the model list,
+			// failover to the next account. OpenAI-compatible providers never set
+			// isRateLimited:true in parseRateLimit, so we must handle it here.
+			if (await isModelUnavailableError(rawResponse)) {
+				log.warn(
+					`All models exhausted on account ${account.name}, failing over to next account`,
+				);
+				return null;
+			}
+		}
+
 		// Process response (transform format, sanitize headers, etc.) using account-specific provider
 		const response = await provider.processResponse(rawResponse, account);
+
+		// Failover to next account on upstream 401 — credentials are invalid/expired
+		if (response.status === 401) {
+			log.warn(
+				`Authentication failed (401) for account ${account.name}, failing over to next account`,
+			);
+			return null;
+		}
 
 		// Check for rate limit using account-specific provider
 		const isRateLimited = await processProxyResponse(

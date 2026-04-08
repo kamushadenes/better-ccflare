@@ -18,7 +18,9 @@ export {
 	getAccountsNeedingReauth,
 	getValidAccessToken,
 	isRefreshTokenLikelyExpired,
+	registerPollingRestarter,
 	registerRefreshClearer,
+	restartUsagePollingForAccount,
 	startGlobalTokenHealthChecks,
 	stopGlobalTokenHealthChecks,
 	type TokenHealthReport,
@@ -28,6 +30,7 @@ export {
 	getUsageWorker,
 	handleProxy,
 	type ProxyContext,
+	sendWorkerConfigUpdate,
 	terminateUsageWorker,
 } from "./proxy";
 export {

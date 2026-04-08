@@ -26,14 +26,100 @@ import {
 	fetchUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
+	parseCodexUsageHeaders,
 	type UsageData,
 	usageCache,
 } from "@better-ccflare/providers";
-import { clearAccountRefreshCache } from "@better-ccflare/proxy";
+import {
+	clearAccountRefreshCache,
+	restartUsagePollingForAccount,
+} from "@better-ccflare/proxy";
 import type { FullUsageData } from "@better-ccflare/types";
 import type { AccountResponse } from "../types";
 
 const log = new Logger("AccountsHandler");
+
+function normalizeCodexUsageData(usage: UsageData): UsageData | null {
+	const normalized: UsageData = {
+		five_hour: { ...usage.five_hour },
+		seven_day: { ...usage.seven_day },
+	};
+	if (
+		normalized.five_hour.resets_at &&
+		new Date(normalized.five_hour.resets_at).getTime() <= Date.now()
+	) {
+		normalized.five_hour = { utilization: 0, resets_at: null };
+	}
+	if (
+		normalized.seven_day.resets_at &&
+		new Date(normalized.seven_day.resets_at).getTime() <= Date.now()
+	) {
+		normalized.seven_day = { utilization: 0, resets_at: null };
+	}
+	return normalized.five_hour.resets_at !== null ||
+		normalized.seven_day.resets_at !== null
+		? normalized
+		: null;
+}
+
+async function getCachedOrPersistedCodexUsage(
+	db: ReturnType<DatabaseOperations["getAdapter"]>,
+	accountId: string,
+	accountName: string,
+	cacheData: FullUsageData | null,
+): Promise<FullUsageData | null> {
+	if (cacheData) {
+		const normalizedCache = normalizeCodexUsageData(cacheData as UsageData);
+		if (normalizedCache) {
+			return normalizedCache as FullUsageData;
+		}
+	}
+	const rows = await db.query<{ json: string; timestamp: number | null }>(
+		`SELECT rp.json, COALESCE(rp.timestamp, r.timestamp) as timestamp
+		 FROM request_payloads rp
+		 JOIN requests r ON rp.id = r.id
+		 WHERE r.account_used = ?
+		 ORDER BY r.timestamp DESC
+		 LIMIT 20`,
+		[accountId],
+	);
+
+	for (const row of rows) {
+		if (!row.json || !row.timestamp) continue;
+
+		try {
+			const payload = JSON.parse(row.json) as {
+				response?: { headers?: Record<string, string>; status?: number };
+				meta?: { timestamp?: number };
+			};
+			const headerEntries = Object.entries(payload.response?.headers ?? {});
+			if (headerEntries.length === 0) continue;
+
+			const codexStatus = payload.response?.status;
+			const payloadTimestamp = payload.meta?.timestamp ?? row.timestamp;
+			const usage = parseCodexUsageHeaders(new Headers(headerEntries), {
+				baseTimeMs: payloadTimestamp,
+				allowRelativeResetAfter: true,
+				defaultUtilization: codexStatus === 429 ? 100 : 0,
+			});
+			if (!usage) continue;
+
+			const normalizedUsage = normalizeCodexUsageData(usage);
+			if (!normalizedUsage) continue;
+
+			usageCache.set(accountId, normalizedUsage);
+			log.debug(`Recovered Codex usage from stored payload for ${accountName}`);
+			return normalizedUsage as FullUsageData;
+		} catch (error) {
+			log.warn(
+				`Failed to recover Codex usage from stored payload for ${accountName}:`,
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	return null;
+}
 
 /**
  * Create an accounts list handler
@@ -71,6 +157,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			custom_endpoint: string | null;
 			model_mappings: string | null;
 			cross_region_mode: string | null;
+			model_fallbacks: string | null;
 		}>(
 			`
 				SELECT
@@ -97,6 +184,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					custom_endpoint,
 					model_mappings,
 					cross_region_mode,
+					model_fallbacks,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -159,208 +247,226 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			}),
 		);
 
-		const response: AccountResponse[] = accounts.map((account) => {
-			let rateLimitStatus = "OK";
+		const response: AccountResponse[] = await Promise.all(
+			accounts.map(async (account) => {
+				let rateLimitStatus = "OK";
 
-			// Use unified rate limit status if available
-			if (account.rate_limit_status) {
-				rateLimitStatus = account.rate_limit_status;
-				const resetMs = Number(account.rate_limit_reset);
-				if (resetMs && resetMs > now) {
-					const minutesLeft = Math.ceil((resetMs - now) / 60000);
-					rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
+				// Use unified rate limit status if available
+				if (account.rate_limit_status) {
+					rateLimitStatus = account.rate_limit_status;
+					const resetMs = Number(account.rate_limit_reset);
+					if (resetMs && resetMs > now) {
+						const minutesLeft = Math.ceil((resetMs - now) / 60000);
+						rateLimitStatus = `${account.rate_limit_status} (${minutesLeft}m)`;
+					}
+				} else if (account.rate_limited && account.rate_limited_until) {
+					// Fall back to legacy rate limit check
+					const limitedMs = Number(account.rate_limited_until);
+					if (limitedMs > now) {
+						const minutesLeft = Math.ceil((limitedMs - now) / 60000);
+						rateLimitStatus = `Rate limited (${minutesLeft}m)`;
+					}
 				}
-			} else if (account.rate_limited && account.rate_limited_until) {
-				// Fall back to legacy rate limit check
-				const limitedMs = Number(account.rate_limited_until);
-				if (limitedMs > now) {
-					const minutesLeft = Math.ceil((limitedMs - now) / 60000);
-					rateLimitStatus = `Rate limited (${minutesLeft}m)`;
-				}
-			}
 
-			// Get usage data from cache for Anthropic and NanoGPT accounts
-			const usageData = usageCache.get(account.id);
-			let usageUtilization: number | null = null;
-			let usageWindow: string | null = null;
-			let fullUsageData: FullUsageData | null = null;
+				// Get usage data from cache for providers that expose account-page quota or credit data
+				const cachedUsageData = usageCache.get(account.id);
+				let usageData: FullUsageData | null =
+					cachedUsageData as FullUsageData | null;
+				if (account.provider === "codex") {
+					usageData = await getCachedOrPersistedCodexUsage(
+						db,
+						account.id,
+						account.name,
+						usageData,
+					);
+				}
+				let usageUtilization: number | null = null;
+				let usageWindow: string | null = null;
+				let fullUsageData: FullUsageData | null = null;
 
-			if (account.provider === "anthropic" && usageData) {
-				// Anthropic usage data - type guard to check it's UsageData
-				const isAnthropicData =
-					"five_hour" in usageData && "seven_day" in usageData;
-				if (isAnthropicData) {
-					try {
-						usageUtilization = getRepresentativeUtilization(
-							usageData as UsageData,
-						);
-						usageWindow = getRepresentativeWindow(usageData as UsageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						// Log error but don't fail the entire accounts page
-						log.warn(
-							`Failed to process usage data for account ${account.id}:`,
-							error instanceof Error ? error.message : String(error),
-						);
-						// Keep null values for usage if processing fails
+				if (
+					(account.provider === "anthropic" || account.provider === "codex") &&
+					usageData
+				) {
+					const isAnthropicStyleData =
+						"five_hour" in usageData && "seven_day" in usageData;
+					if (isAnthropicStyleData) {
+						try {
+							usageUtilization = getRepresentativeUtilization(
+								usageData as UsageData,
+							);
+							usageWindow = getRepresentativeWindow(usageData as UsageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process ${account.provider} usage data for account ${account.id}:`,
+								error instanceof Error ? error.message : String(error),
+							);
+						}
+					}
+				} else if (account.provider === "nanogpt" && usageData) {
+					// NanoGPT usage data - type guard to check it's NanoGPTUsageData
+					const isNanoGPTData =
+						"active" in usageData &&
+						"daily" in usageData &&
+						"monthly" in usageData;
+					if (isNanoGPTData) {
+						try {
+							const {
+								getRepresentativeNanoGPTUtilization,
+								getRepresentativeNanoGPTWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
+							usageWindow = getRepresentativeNanoGPTWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process NanoGPT usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
+				} else if (account.provider === "zai" && usageData) {
+					// Zai usage data - type guard to check it's ZaiUsageData
+					const isZaiData =
+						"time_limit" in usageData || "tokens_limit" in usageData;
+					if (isZaiData) {
+						try {
+							const {
+								getRepresentativeZaiUtilization,
+								getRepresentativeZaiWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeZaiUtilization(usageData);
+							usageWindow = getRepresentativeZaiWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Zai usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
+				} else if (account.provider === "kilo" && usageData) {
+					// Kilo usage data - type guard to check it's KiloUsageData
+					const isKiloData = "remainingUsd" in usageData;
+					if (isKiloData) {
+						try {
+							const {
+								getRepresentativeKiloUtilization,
+								getRepresentativeKiloWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization = getRepresentativeKiloUtilization(usageData);
+							usageWindow = getRepresentativeKiloWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Kilo usage data for account ${account.name}:`,
+								error,
+							);
+						}
+					}
+				} else if (account.provider === "alibaba-coding-plan" && usageData) {
+					// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData
+					const isAlibabaData =
+						"five_hour" in usageData && "weekly" in usageData;
+					if (isAlibabaData) {
+						try {
+							const {
+								getRepresentativeAlibabaCodingPlanUtilization,
+								getRepresentativeAlibabaCodingPlanWindow,
+							} = require("@better-ccflare/providers");
+							usageUtilization =
+								getRepresentativeAlibabaCodingPlanUtilization(usageData);
+							usageWindow = getRepresentativeAlibabaCodingPlanWindow(usageData);
+							fullUsageData = usageData as FullUsageData;
+						} catch (error) {
+							log.warn(
+								`Failed to process Alibaba Coding Plan usage data for account ${account.name}:`,
+								error,
+							);
+						}
 					}
 				}
-			} else if (account.provider === "nanogpt" && usageData) {
-				// NanoGPT usage data - type guard to check it's NanoGPTUsageData
-				const isNanoGPTData =
-					"active" in usageData &&
-					"daily" in usageData &&
-					"monthly" in usageData;
-				if (isNanoGPTData) {
-					try {
-						const {
-							getRepresentativeNanoGPTUtilization,
-							getRepresentativeNanoGPTWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
-						usageWindow = getRepresentativeNanoGPTWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process NanoGPT usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			} else if (account.provider === "zai" && usageData) {
-				// Zai usage data - type guard to check it's ZaiUsageData
-				const isZaiData =
-					"time_limit" in usageData || "tokens_limit" in usageData;
-				if (isZaiData) {
-					try {
-						const {
-							getRepresentativeZaiUtilization,
-							getRepresentativeZaiWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization = getRepresentativeZaiUtilization(usageData);
-						usageWindow = getRepresentativeZaiWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process Zai usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			} else if (account.provider === "kilo" && usageData) {
-				// Kilo usage data - type guard to check it's KiloUsageData
-				const isKiloData = "remainingUsd" in usageData;
-				if (isKiloData) {
-					try {
-						const {
-							getRepresentativeKiloUtilization,
-							getRepresentativeKiloWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization = getRepresentativeKiloUtilization(usageData);
-						usageWindow = getRepresentativeKiloWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process Kilo usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			} else if (account.provider === "alibaba-coding-plan" && usageData) {
-				// Alibaba Coding Plan usage data - type guard to check it's AlibabaCodingPlanUsageData
-				const isAlibabaData = "five_hour" in usageData && "weekly" in usageData;
-				if (isAlibabaData) {
-					try {
-						const {
-							getRepresentativeAlibabaCodingPlanUtilization,
-							getRepresentativeAlibabaCodingPlanWindow,
-						} = require("@better-ccflare/providers");
-						usageUtilization =
-							getRepresentativeAlibabaCodingPlanUtilization(usageData);
-						usageWindow = getRepresentativeAlibabaCodingPlanWindow(usageData);
-						fullUsageData = usageData as FullUsageData;
-					} catch (error) {
-						log.warn(
-							`Failed to process Alibaba Coding Plan usage data for account ${account.name}:`,
-							error,
-						);
-					}
-				}
-			}
 
-			// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
-			let modelMappings: { [key: string]: string } | null = null;
-			if (
-				(account.provider === "openai-compatible" ||
-					account.provider === "anthropic-compatible" ||
-					account.provider === "nanogpt" ||
-					account.provider === "openrouter" ||
-					account.provider === "alibaba-coding-plan") &&
-				account.model_mappings
-			) {
-				try {
-					const parsed = JSON.parse(account.model_mappings);
-					// Handle both formats: direct mappings or wrapped in modelMappings
-					modelMappings = parsed.modelMappings || parsed || null;
-				} catch {
-					// If parsing fails, ignore model mappings
-					modelMappings = null;
-				}
-			} else if (
-				account.provider === "openai-compatible" &&
-				account.custom_endpoint
-			) {
-				// Also try parsing from custom_endpoint for backwards compatibility
-				try {
-					const parsed = JSON.parse(account.custom_endpoint);
-					if (parsed.modelMappings) {
-						modelMappings = parsed.modelMappings;
+				// Parse model mappings for OpenAI-compatible, Anthropic-compatible, NanoGPT, and OpenRouter providers
+				let modelMappings: { [key: string]: string } | null = null;
+				if (account.model_mappings) {
+					try {
+						const parsed = JSON.parse(account.model_mappings);
+						// Handle both formats: direct mappings or wrapped in modelMappings
+						modelMappings = parsed.modelMappings || parsed || null;
+					} catch {
+						// If parsing fails, ignore model mappings
+						modelMappings = null;
 					}
-				} catch {
-					// If parsing fails, ignore model mappings
-					modelMappings = null;
+				} else if (
+					account.provider === "openai-compatible" &&
+					account.custom_endpoint
+				) {
+					// Also try parsing from custom_endpoint for backwards compatibility
+					try {
+						const parsed = JSON.parse(account.custom_endpoint);
+						if (parsed.modelMappings) {
+							modelMappings = parsed.modelMappings;
+						}
+					} catch {
+						// If parsing fails, ignore model mappings
+						modelMappings = null;
+					}
 				}
-			}
 
-			return {
-				id: account.id,
-				name: account.name,
-				provider: account.provider || "anthropic",
-				requestCount: Number(account.request_count) || 0,
-				totalRequests: Number(account.total_requests) || 0,
-				lastUsed: account.last_used
-					? new Date(Number(account.last_used)).toISOString()
-					: null,
-				created: new Date(Number(account.created_at)).toISOString(),
-				paused: account.paused === 1,
-				priority: Number(account.priority) || 0,
-				tokenStatus: account.token_valid ? "valid" : "expired",
-				tokenExpiresAt: account.expires_at
-					? new Date(Number(account.expires_at)).toISOString()
-					: null,
-				rateLimitStatus,
-				rateLimitReset: account.rate_limit_reset
-					? new Date(Number(account.rate_limit_reset)).toISOString()
-					: null,
-				rateLimitRemaining:
-					account.rate_limit_remaining != null
-						? Number(account.rate_limit_remaining)
+				// Parse model fallbacks for all providers
+				let modelFallbacks: { [key: string]: string } | null = null;
+				if (account.model_fallbacks) {
+					try {
+						const parsed = JSON.parse(account.model_fallbacks);
+						modelFallbacks = parsed.modelFallbacks || parsed || null;
+					} catch {
+						modelFallbacks = null;
+					}
+				}
+
+				return {
+					id: account.id,
+					name: account.name,
+					provider: account.provider || "anthropic",
+					requestCount: Number(account.request_count) || 0,
+					totalRequests: Number(account.total_requests) || 0,
+					lastUsed: account.last_used
+						? new Date(Number(account.last_used)).toISOString()
 						: null,
-				rateLimitedUntil: account.rate_limited_until
-					? Number(account.rate_limited_until)
-					: null,
-				sessionInfo: account.session_info || "",
-				autoFallbackEnabled: account.auto_fallback_enabled === 1,
-				autoRefreshEnabled: account.auto_refresh_enabled === 1,
-				customEndpoint: account.custom_endpoint,
-				modelMappings,
-				usageUtilization,
-				usageWindow,
-				usageData: fullUsageData, // Full usage data for UI
-				hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
-				crossRegionMode: account.cross_region_mode,
-			};
-		});
+					created: new Date(Number(account.created_at)).toISOString(),
+					paused: account.paused === 1,
+					priority: Number(account.priority) || 0,
+					tokenStatus: account.token_valid ? "valid" : "expired",
+					tokenExpiresAt: account.expires_at
+						? new Date(Number(account.expires_at)).toISOString()
+						: null,
+					rateLimitStatus,
+					rateLimitReset: account.rate_limit_reset
+						? new Date(Number(account.rate_limit_reset)).toISOString()
+						: null,
+					rateLimitRemaining:
+						account.rate_limit_remaining != null
+							? Number(account.rate_limit_remaining)
+							: null,
+					rateLimitedUntil: account.rate_limited_until
+						? Number(account.rate_limited_until)
+						: null,
+					sessionInfo: account.session_info || "",
+					autoFallbackEnabled: account.auto_fallback_enabled === 1,
+					autoRefreshEnabled: account.auto_refresh_enabled === 1,
+					customEndpoint: account.custom_endpoint,
+					modelMappings,
+					usageUtilization,
+					usageWindow,
+					usageData: fullUsageData, // Full usage data for UI
+					hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
+					crossRegionMode: account.cross_region_mode,
+					modelFallbacks,
+				};
+			}),
+		);
 
 		return jsonResponse(response);
 	};
@@ -778,6 +884,15 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 				},
 			);
 
+			// Validate model mappings
+			let modelMappingsJson: string | null = null;
+			if (body.modelMappings && typeof body.modelMappings === "object") {
+				const validated = validateAndSanitizeModelMappings(body.modelMappings);
+				if (validated) {
+					modelMappingsJson = JSON.stringify(validated);
+				}
+			}
+
 			// Create z.ai account directly in database
 			const accountId = crypto.randomUUID();
 			const now = Date.now();
@@ -786,8 +901,8 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 			await db.run(
 				`INSERT INTO accounts (
 					id, name, provider, api_key, refresh_token, access_token,
-					expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					accountId,
 					name,
@@ -801,6 +916,7 @@ export function createZaiAccountAddHandler(dbOps: DatabaseOperations) {
 					0,
 					priority,
 					customEndpoint || null,
+					modelMappingsJson,
 				],
 			);
 
@@ -1837,37 +1953,61 @@ export function createAccountModelMappingsUpdateHandler(
 				"openrouter",
 				"kilo",
 				"alibaba-coding-plan",
+				"zai",
 			];
 			if (!MODEL_MAPPING_PROVIDERS.includes(account.provider)) {
 				return errorResponse(
 					BadRequest(
-						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, NanoGPT, OpenRouter, Kilo, and Alibaba accounts",
+						"Model mappings are only available for OpenAI-compatible, Anthropic-compatible, NanoGPT, OpenRouter, Kilo, Alibaba, and z.ai accounts",
 					),
 				);
 			}
 
 			// Handle model mappings update
-			const modelMappings: { [key: string]: string } = (body.modelMappings ||
-				{}) as { [key: string]: string };
+			const modelMappings = body.modelMappings || {};
 
-			// Validate model mappings
+			// Validate model mappings - values can be string or string[]
 			if (typeof modelMappings !== "object" || Array.isArray(modelMappings)) {
 				return errorResponse(BadRequest("Model mappings must be an object"));
 			}
 
-			// Ensure modelMappings is a record with string values
-			if (modelMappings) {
-				for (const [_key, value] of Object.entries(modelMappings)) {
-					if (typeof value !== "string") {
+			for (const [_key, value] of Object.entries(modelMappings)) {
+				if (typeof value === "string") {
+					if (!value.trim()) {
 						return errorResponse(
-							BadRequest("All model mapping values must be strings"),
+							BadRequest(
+								`Model mapping value for key '${_key}' must not be empty`,
+							),
 						);
 					}
+				} else if (Array.isArray(value)) {
+					if (value.length === 0) {
+						return errorResponse(
+							BadRequest(
+								`Model mapping array for key '${_key}' must not be empty`,
+							),
+						);
+					}
+					for (const item of value) {
+						if (typeof item !== "string" || !item.trim()) {
+							return errorResponse(
+								BadRequest(
+									`All model mapping array values for key '${_key}' must be non-empty strings`,
+								),
+							);
+						}
+					}
+				} else {
+					return errorResponse(
+						BadRequest(
+							"Model mapping values must be strings or arrays of strings",
+						),
+					);
 				}
 			}
 
 			// Get existing model mappings from the dedicated field
-			let existingModelMappings: { [key: string]: string } = {};
+			let existingModelMappings: Record<string, string | string[]> = {};
 			const result = await db.get<{ model_mappings: string | null }>(
 				"SELECT model_mappings FROM accounts WHERE id = ?",
 				[accountId],
@@ -1877,10 +2017,8 @@ export function createAccountModelMappingsUpdateHandler(
 			if (existingModelMappingsStr) {
 				try {
 					const parsed = JSON.parse(existingModelMappingsStr);
-					// Handle both formats: direct mappings or wrapped in modelMappings
 					existingModelMappings = parsed.modelMappings || parsed || {};
 				} catch {
-					// If parsing fails, ignore existing mappings
 					existingModelMappings = {};
 				}
 			}
@@ -1888,14 +2026,23 @@ export function createAccountModelMappingsUpdateHandler(
 			// Merge new model mappings with existing ones
 			const mergedModelMappings = { ...existingModelMappings };
 
-			// Update or remove model mappings based on the input
 			for (const [modelType, modelValue] of Object.entries(modelMappings)) {
-				if (!modelValue || modelValue.trim() === "") {
-					// Remove the mapping if value is empty
-					delete mergedModelMappings[modelType];
-				} else {
-					// Update the mapping
-					mergedModelMappings[modelType] = modelValue.trim();
+				if (typeof modelValue === "string") {
+					if (!modelValue.trim()) {
+						delete mergedModelMappings[modelType];
+					} else {
+						mergedModelMappings[modelType] = modelValue.trim();
+					}
+				} else if (Array.isArray(modelValue)) {
+					const trimmed = modelValue
+						.map((v) => (typeof v === "string" ? v.trim() : ""))
+						.filter(Boolean);
+					if (trimmed.length > 0) {
+						mergedModelMappings[modelType] =
+							trimmed.length === 1 ? trimmed[0] : trimmed;
+					} else {
+						delete mergedModelMappings[modelType];
+					}
 				}
 			}
 
@@ -1923,6 +2070,104 @@ export function createAccountModelMappingsUpdateHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to update model mappings"),
+			);
+		}
+	};
+}
+
+/**
+ * Create an account model fallbacks update handler.
+ * @deprecated Fallbacks are now merged into model_mappings as arrays.
+ * This handler appends fallback models to existing model_mappings arrays.
+ */
+export function createAccountModelFallbacksUpdateHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ id: string }>(
+				"SELECT id FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			// Validate fallbacks input
+			const modelFallbacks = body.modelFallbacks || {};
+			if (typeof modelFallbacks !== "object" || Array.isArray(modelFallbacks)) {
+				return errorResponse(BadRequest("Model fallbacks must be an object"));
+			}
+			for (const [_key, value] of Object.entries(modelFallbacks)) {
+				if (typeof value !== "string" || !value.trim()) {
+					return errorResponse(
+						BadRequest("All model fallback values must be non-empty strings"),
+					);
+				}
+			}
+
+			// Get existing model_mappings and merge fallbacks into them
+			let existingMappings: Record<string, string | string[]> = {};
+			const result = await db.get<{ model_mappings: string | null }>(
+				"SELECT model_mappings FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (result?.model_mappings) {
+				try {
+					const parsed = JSON.parse(result.model_mappings);
+					existingMappings = parsed.modelMappings || parsed || {};
+				} catch {
+					existingMappings = {};
+				}
+			}
+
+			// Merge: for each fallback, append to existing mapping array
+			for (const [modelType, fallbackValue] of Object.entries(modelFallbacks)) {
+				const existing = existingMappings[modelType];
+				const fallback = (fallbackValue as string).trim();
+
+				if (typeof existing === "string") {
+					// Promote single string to array with fallback appended
+					existingMappings[modelType] = [existing, fallback];
+				} else if (Array.isArray(existing)) {
+					if (!existing.includes(fallback)) {
+						existingMappings[modelType] = [...existing, fallback];
+					}
+				} else {
+					existingMappings[modelType] = fallback;
+				}
+			}
+
+			const finalMappings =
+				Object.keys(existingMappings).length > 0
+					? JSON.stringify(existingMappings)
+					: null;
+
+			await db.run(
+				"UPDATE accounts SET model_mappings = ?, model_fallbacks = NULL WHERE id = ?",
+				[finalMappings, accountId],
+			);
+
+			log.info(
+				`Merged model fallbacks into model_mappings for account ${accountId}`,
+			);
+
+			return jsonResponse({
+				success: true,
+				message: "Model fallbacks merged into model mappings",
+				modelMappings: existingMappings,
+			});
+		} catch (error) {
+			log.error("Account model fallbacks update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update model fallbacks"),
 			);
 		}
 	};
@@ -2760,6 +3005,61 @@ export function createOpenRouterAccountAddHandler(dbOps: DatabaseOperations) {
 				error instanceof Error
 					? error
 					: new Error("Failed to create OpenRouter account"),
+			);
+		}
+	};
+}
+
+/**
+ * Force an immediate usage data refresh for an Anthropic OAuth account.
+ * Clears the refresh cache, restarts usage polling (which refreshes the token
+ * if expired), and returns whether polling was successfully restarted.
+ */
+export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			const account = await dbOps.getAccount(accountId);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			if (account.provider !== "anthropic") {
+				return errorResponse(
+					BadRequest(
+						"Usage refresh is only available for Anthropic OAuth accounts",
+					),
+				);
+			}
+
+			if (!account.access_token && !account.refresh_token) {
+				return errorResponse(
+					BadRequest(
+						`Account '${account.name}' has no tokens - please re-authenticate`,
+					),
+				);
+			}
+
+			clearAccountRefreshCache(accountId);
+			const pollingRestarted = await restartUsagePollingForAccount(accountId);
+
+			log.info(
+				`Usage refresh requested for account '${account.name}' (polling restarted: ${pollingRestarted})`,
+			);
+
+			return jsonResponse({
+				success: true,
+				message: pollingRestarted
+					? `Usage polling restarted for account '${account.name}'. Fresh usage data will appear within 5-10 seconds.`
+					: `Usage cache cleared for account '${account.name}'. Note: server-side polling could not be restarted - usage data may not update until a request is proxied.`,
+				pollingRestarted,
+			});
+		} catch (error) {
+			log.error("Account refresh usage error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to refresh usage data"),
 			);
 		}
 	};

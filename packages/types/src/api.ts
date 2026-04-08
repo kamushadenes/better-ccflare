@@ -4,6 +4,7 @@ export interface RequestMeta {
 	path: string;
 	timestamp: number;
 	agentUsed?: string | null;
+	project?: string | null;
 	headers?: Headers;
 }
 
@@ -20,11 +21,13 @@ export interface AgentUpdatePayload {
 export interface RetentionGetResponse {
 	payloadDays: number;
 	requestDays: number;
+	storePayloads: boolean;
 }
 
 export interface RetentionSetRequest {
 	payloadDays?: number;
 	requestDays?: number;
+	storePayloads?: boolean;
 }
 
 export interface CleanupResponse {

@@ -10,12 +10,12 @@ import {
 	Trash2,
 	Zap,
 } from "lucide-react";
+import { useState } from "react";
 import type { Account } from "../../api";
 import {
 	providerShowsCreditsBalance,
 	providerShowsWeeklyUsage,
 	providerSupportsAutoFeatures,
-	providerSupportsModelMappings,
 } from "../../utils/provider-utils";
 import { OAuthTokenStatusWithBoundary } from "../OAuthTokenStatus";
 import { Button } from "../ui/button";
@@ -27,6 +27,7 @@ interface AccountListItemProps {
 	isActive?: boolean;
 	onPauseToggle: (account: Account) => void;
 	onForceResetRateLimit: (account: Account) => void;
+	onRefreshUsage: (account: Account) => Promise<void>;
 	onRemove: (name: string) => void;
 	onRename: (account: Account) => void;
 	onPriorityChange: (account: Account) => void;
@@ -41,6 +42,7 @@ export function AccountListItem({
 	isActive = false,
 	onPauseToggle,
 	onForceResetRateLimit,
+	onRefreshUsage,
 	onRemove,
 	onRename,
 	onPriorityChange,
@@ -49,6 +51,7 @@ export function AccountListItem({
 	onCustomEndpointChange,
 	onModelMappingsChange,
 }: AccountListItemProps) {
+	const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
 	const presenter = new AccountPresenter(account);
 	// Only hard-limit statuses mean the account is actually blocked; soft warnings
 	// like "allowed_warning" / "queueing_soft" mean the account is still usable.
@@ -250,25 +253,45 @@ export function AccountListItem({
 							/>
 						</Button>
 					)}
-					{onModelMappingsChange &&
-						providerSupportsModelMappings(account.provider) && (
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={() => onModelMappingsChange(account)}
-								title={
-									account.modelMappings
-										? `Model mappings configured (${Object.keys(account.modelMappings).length} mappings)`
-										: "Configure model mappings"
+					{onModelMappingsChange && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => onModelMappingsChange(account)}
+							title={
+								account.modelMappings
+									? `Model mappings configured (${Object.keys(account.modelMappings).length} mappings)`
+									: "Configure model mappings"
+							}
+						>
+							<Hash
+								className={`h-4 w-4 ${
+									account.modelMappings ? "text-primary" : ""
+								}`}
+							/>
+						</Button>
+					)}
+					{account.provider === "anthropic" && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-8 gap-1 text-xs"
+							disabled={isRefreshingUsage}
+							onClick={async () => {
+								setIsRefreshingUsage(true);
+								try {
+									await onRefreshUsage(account);
+								} finally {
+									setIsRefreshingUsage(false);
 								}
-							>
-								<Hash
-									className={`h-4 w-4 ${
-										account.modelMappings ? "text-primary" : ""
-									}`}
-								/>
-							</Button>
-						)}
+							}}
+							title="Refresh usage data (restarts usage polling and refreshes token if expired)"
+						>
+							<RefreshCw
+								className={`h-3.5 w-3.5 ${isRefreshingUsage ? "animate-spin" : ""}`}
+							/>
+						</Button>
+					)}
 					{showForceReset && (
 						<Button
 							variant="outline"
@@ -307,7 +330,7 @@ export function AccountListItem({
 				</div>
 			</div>
 			{(account.rateLimitReset ||
-				providerShowsWeeklyUsage(account.provider) ||
+				account.usageData ||
 				providerShowsCreditsBalance(account.provider)) && (
 				<RateLimitProgress
 					resetIso={account.rateLimitReset}

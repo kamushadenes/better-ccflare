@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "@better-ccflare/config";
 import type { ModelMapping } from "@better-ccflare/core";
 import {
+	validateAndSanitizeModelFallbacks,
 	validateAndSanitizeModelMappings,
 	validateApiKey,
 	validateEndpointUrl,
@@ -12,6 +14,7 @@ import {
 import type { DatabaseOperations } from "@better-ccflare/database";
 import { createOAuthFlow } from "@better-ccflare/oauth-flow";
 import {
+	generatePKCE,
 	getOAuthProvider,
 	type TokenRefreshResult as TokenResult,
 } from "@better-ccflare/providers";
@@ -38,10 +41,13 @@ export interface AddAccountOptionsWithAdapter {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
-		| "alibaba-coding-plan";
+		| "alibaba-coding-plan"
+		| "codex";
 	priority?: number;
 	customEndpoint?: string;
-	modelMappings?: { [key: string]: string };
+	modelMappings?: { [key: string]: string | string[] };
+	/** @deprecated Use comma-separated values in modelMappings instead */
+	modelFallbacks?: { [key: string]: string };
 	profile?: string;
 	crossRegionMode?: "geographic" | "global" | "regional";
 	adapter?: PromptAdapter;
@@ -64,7 +70,8 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
-		| "alibaba-coding-plan";
+		| "alibaba-coding-plan"
+		| "codex";
 }
 
 /**
@@ -146,7 +153,8 @@ export async function createNanoGPTAccount(
 	apiKey: string,
 	priority: number,
 	customEndpoint?: string,
-	modelMappings?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -164,11 +172,17 @@ export async function createNanoGPTAccount(
 		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validatedMappings);
 	}
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -183,6 +197,7 @@ export async function createNanoGPTAccount(
 			validatedPriority,
 			validatedEndpoint,
 			validatedModelMappings,
+			validatedModelFallbacks,
 		],
 	);
 }
@@ -195,7 +210,8 @@ async function createKiloAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -206,11 +222,17 @@ async function createKiloAccount(
 		const validated = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validated);
 	}
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -225,6 +247,7 @@ async function createKiloAccount(
 			validatedPriority,
 			null,
 			validatedModelMappings,
+			validatedModelFallbacks,
 		],
 	);
 }
@@ -237,7 +260,8 @@ async function createAlibabaCodingPlanAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -248,11 +272,17 @@ async function createAlibabaCodingPlanAccount(
 		const validated = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validated);
 	}
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -267,6 +297,7 @@ async function createAlibabaCodingPlanAccount(
 			validatedPriority,
 			null,
 			validatedModelMappings,
+			validatedModelFallbacks,
 		],
 	);
 }
@@ -279,7 +310,8 @@ async function createOpenRouterAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
-	modelMappings?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -290,11 +322,17 @@ async function createOpenRouterAccount(
 		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
 		validatedModelMappings = JSON.stringify(validatedMappings);
 	}
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -309,6 +347,7 @@ async function createOpenRouterAccount(
 			validatedPriority,
 			null,
 			validatedModelMappings,
+			validatedModelFallbacks,
 		],
 	);
 }
@@ -322,7 +361,8 @@ async function createAnthropicCompatibleAccount(
 	apiKey: string,
 	priority: number,
 	customEndpoint?: string,
-	modelMappings?: { [key: string]: string } | null,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -347,11 +387,18 @@ async function createAnthropicCompatibleAccount(
 		validatedModelMappings = JSON.stringify(validatedMappings);
 	}
 
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, 0, 0, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -361,6 +408,7 @@ async function createAnthropicCompatibleAccount(
 			validatedPriority,
 			validatedEndpoint,
 			validatedModelMappings,
+			validatedModelFallbacks,
 		],
 	);
 }
@@ -373,6 +421,8 @@ async function createZaiAccount(
 	name: string,
 	apiKey: string,
 	priority: number,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -380,12 +430,23 @@ async function createZaiAccount(
 	// Validate inputs
 	const validatedApiKey = validateApiKey(apiKey, "z.ai API key");
 	const validatedPriority = validatePriority(priority, "priority");
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
 
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -396,6 +457,8 @@ async function createZaiAccount(
 			0,
 			validatedPriority,
 			null,
+			validatedModelMappings,
+			validatedModelFallbacks,
 		],
 	);
 
@@ -543,17 +606,38 @@ async function createVertexAIAccount(
 }
 
 /**
- * Prompt user for model mappings
+ * Parse a comma-separated model string into a string or string[].
+ * Trims whitespace around each value and filters empty entries.
+ */
+function parseModelInput(value: string): string | string[] | null {
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	const parts = trimmed
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return parts.length === 1 ? parts[0] : parts;
+}
+
+/**
+ * Prompt user for model mappings. Supports comma-separated models for cycling.
  */
 async function promptModelMappings(
 	adapter: PromptAdapter,
 	existingMappings?: ModelMapping,
+	providerDefaults?: { opus: string; sonnet: string; haiku: string },
 ): Promise<ModelMapping | null> {
+	const defaults = providerDefaults ?? {
+		opus: "openai/gpt-5",
+		sonnet: "openai/gpt-5",
+		haiku: "openai/gpt-5-mini",
+	};
+
 	const wantsCustomMappings = await adapter.select(
 		"\nDo you want to configure custom model mappings?",
 		[
 			{
-				label: "No, use defaults (opus/sonnet→gpt-5, haiku→gpt-5-mini)",
+				label: `No, use defaults (opus/sonnet→${defaults.opus}, haiku→${defaults.haiku})`,
 				value: "no",
 			},
 			{ label: "Yes, configure custom mappings", value: "yes" },
@@ -565,31 +649,30 @@ async function promptModelMappings(
 	}
 
 	console.log(
-		"\nEnter model mappings (press Enter with empty value to finish):",
+		"\nEnter model mappings (comma-separated for multiple models to cycle through):",
 	);
 	const mappings: ModelMapping = {};
 
 	// Get opus mapping
-	const opusModel = await adapter.input("Opus model (default: openai/gpt-5): ");
-	if (opusModel.trim()) {
-		mappings.opus = opusModel.trim();
-	}
+	const opusModel = await adapter.input(
+		`Opus model (default: ${defaults.opus}): `,
+	);
+	const opus = parseModelInput(opusModel);
+	if (opus) mappings.opus = opus;
 
 	// Get sonnet mapping
 	const sonnetModel = await adapter.input(
-		"Sonnet model (default: openai/gpt-5): ",
+		`Sonnet model (default: ${defaults.sonnet}): `,
 	);
-	if (sonnetModel.trim()) {
-		mappings.sonnet = sonnetModel.trim();
-	}
+	const sonnet = parseModelInput(sonnetModel);
+	if (sonnet) mappings.sonnet = sonnet;
 
 	// Get haiku mapping
 	const haikuModel = await adapter.input(
-		"Haiku model (default: openai/gpt-5-mini): ",
+		`Haiku model (default: ${defaults.haiku}): `,
 	);
-	if (haikuModel.trim()) {
-		mappings.haiku = haikuModel.trim();
-	}
+	const haiku = parseModelInput(haikuModel);
+	if (haiku) mappings.haiku = haiku;
 
 	return Object.keys(mappings).length > 0 ? mappings : null;
 }
@@ -604,6 +687,7 @@ async function createOpenAIAccount(
 	endpoint: string,
 	priority: number,
 	modelMappings: ModelMapping | null,
+	modelFallbacks?: ModelMapping | null,
 ): Promise<void> {
 	const accountId = crypto.randomUUID();
 	const now = Date.now();
@@ -622,11 +706,18 @@ async function createOpenAIAccount(
 		? JSON.stringify(validatedModelMappings)
 		: null;
 
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+
 	await dbOps.getAdapter().run(
 		`INSERT INTO accounts (
 			id, name, provider, api_key, refresh_token, access_token,
-			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings
-		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			accountId,
 			name,
@@ -638,6 +729,7 @@ async function createOpenAIAccount(
 			validatedPriority,
 			validatedEndpoint,
 			modelMappingsJson,
+			validatedModelFallbacks,
 		],
 	);
 
@@ -655,6 +747,146 @@ async function createOpenAIAccount(
 			console.log(`  ${key} → ${value}`);
 		}
 	}
+}
+
+/**
+ * Create a Codex account via OpenAI OAuth with PKCE, using a local callback server on port 1455
+ */
+async function createCodexOAuthAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	priority: number,
+	customEndpoint?: string,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
+): Promise<void> {
+	// Get the CodexOAuthProvider
+	const oauthProvider = getOAuthProvider("codex");
+	if (!oauthProvider) {
+		throw new Error(
+			"Codex OAuth provider not found. This is a bug — please report it.",
+		);
+	}
+
+	const pkce = await generatePKCE();
+	const config = oauthProvider.getOAuthConfig();
+	const authUrl = oauthProvider.generateAuthUrl(config, pkce);
+
+	console.log("\nCodex uses OpenAI OAuth for authentication.");
+	console.log(
+		"A local server will be started on port 1455 to receive the callback.",
+	);
+	console.log("\nOpening browser to authenticate...");
+	console.log(`URL: ${authUrl}`);
+
+	const { openBrowser } = await import("../utils/browser");
+	const browserOpened = await openBrowser(authUrl);
+	if (!browserOpened) {
+		console.log(
+			"\nFailed to open browser automatically. Please manually open the URL above.",
+		);
+	}
+
+	// Start local HTTP server on port 1455 to capture the OAuth callback
+	const callbackPromise = new Promise<{ code: string; state: string }>(
+		(resolve, reject) => {
+			const timeout = setTimeout(
+				() => {
+					server.close();
+					reject(new Error("OAuth callback timed out after 5 minutes."));
+				},
+				5 * 60 * 1000,
+			);
+
+			const server = createServer((req, _res) => {
+				if (!req.url?.startsWith("/auth/callback")) return;
+
+				const url = new URL(req.url, "http://localhost:1455");
+				const code = url.searchParams.get("code");
+				const state = url.searchParams.get("state");
+
+				_res.writeHead(200, { "Content-Type": "text/html" });
+				_res.end(
+					"<html><body><h2>Authentication successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>",
+				);
+
+				clearTimeout(timeout);
+				server.close();
+
+				if (!code) {
+					reject(new Error("No authorization code received in callback."));
+					return;
+				}
+				resolve({ code, state: state || "" });
+			});
+
+			server.listen(1455, "127.0.0.1", () => {
+				console.log(
+					"\nWaiting for OAuth callback on http://localhost:1455/auth/callback ...",
+				);
+			});
+
+			server.on("error", (err) => {
+				clearTimeout(timeout);
+				reject(
+					new Error(
+						`Failed to start local callback server: ${err.message}. Is port 1455 already in use?`,
+					),
+				);
+			});
+		},
+	);
+
+	const { code } = await callbackPromise;
+
+	console.log("\nExchanging code for tokens...");
+	const tokens = await oauthProvider.exchangeCode(code, pkce.verifier, config);
+
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedPriority = validatePriority(priority, "priority");
+
+	let validatedEndpoint: string | null = null;
+	if (customEndpoint) {
+		validatedEndpoint = validateEndpointUrl(customEndpoint, "custom endpoint");
+	}
+
+	let validatedModelMappings: string | null = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validated = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validated);
+	}
+
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"codex",
+			null,
+			tokens.refreshToken,
+			tokens.accessToken,
+			tokens.expiresAt,
+			now,
+			validatedPriority,
+			validatedEndpoint,
+			validatedModelMappings,
+			validatedModelFallbacks,
+		],
+	);
+
+	console.log(`\nAccount '${name}' added successfully!`);
+	console.log("Type: Codex (OpenAI OAuth)");
 }
 
 /**
@@ -683,6 +915,7 @@ export async function addAccount(
 		(await adapter.select("What type of account would you like to add?", [
 			{ label: "Claude CLI OAuth account", value: "claude-oauth" },
 			{ label: "Claude API account", value: "console" },
+			{ label: "Codex (OpenAI OAuth)", value: "codex" },
 			{ label: "Vertex AI (Google Cloud)", value: "vertex-ai" },
 			{ label: "AWS Bedrock (AWS profile credentials)", value: "bedrock" },
 			{ label: "z.ai account (API key)", value: "zai" },
@@ -791,7 +1024,19 @@ export async function addAccount(
 		// Handle z.ai accounts with API keys
 		const apiKey = await adapter.input("\nEnter your z.ai API key: ");
 
-		await createZaiAccount(dbOps, name, apiKey, providedPriority || 0);
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+
+		await createZaiAccount(
+			dbOps,
+			name,
+			apiKey,
+			providedPriority || 0,
+			finalModelMappings,
+		);
 	} else if (mode === "console") {
 		// Handle Console accounts - offer choice between OAuth and direct API key
 		const consoleMethod = await adapter.select(
@@ -911,6 +1156,7 @@ export async function addAccount(
 			adapter,
 			modelMappings,
 		);
+
 		await createNanoGPTAccount(
 			dbOps,
 			name,
@@ -937,6 +1183,7 @@ export async function addAccount(
 			adapter,
 			modelMappings,
 		);
+
 		await createKiloAccount(
 			dbOps,
 			name,
@@ -963,6 +1210,7 @@ export async function addAccount(
 			adapter,
 			modelMappings,
 		);
+
 		await createOpenRouterAccount(
 			dbOps,
 			name,
@@ -991,6 +1239,7 @@ export async function addAccount(
 			adapter,
 			modelMappings,
 		);
+
 		await createAlibabaCodingPlanAccount(
 			dbOps,
 			name,
@@ -1003,6 +1252,35 @@ export async function addAccount(
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: Alibaba Coding Plan International (API key)");
 		console.log("Endpoint: https://coding-intl.dashscope.aliyuncs.com");
+	} else if (mode === "codex") {
+		// Handle Codex accounts via OpenAI OAuth (port-1455 callback server)
+		const priority =
+			providedPriority ??
+			Number(
+				(await adapter.input(
+					"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+				)) || 0,
+			);
+
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+			{
+				opus: "gpt-5.3-codex",
+				sonnet: "gpt-5.3-codex",
+				haiku: "gpt-5.1-codex-mini",
+			},
+		);
+
+		await createCodexOAuthAccount(
+			dbOps,
+			name,
+			typeof priority === "number"
+				? priority
+				: parseInt(String(priority), 10) || 0,
+			customEndpoint,
+			finalModelMappings,
+		);
 	} else if (mode === "anthropic-compatible") {
 		// Handle Anthropic-compatible accounts with API keys
 		const apiKey = await adapter.input(
@@ -1147,7 +1425,8 @@ export async function getAccountsList(
 					account.provider === "minimax" ||
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
-					account.provider === "openrouter"
+					account.provider === "openrouter" ||
+					account.provider === "codex"
 				) {
 					return account.provider;
 				}
